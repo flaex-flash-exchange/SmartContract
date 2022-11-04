@@ -23,17 +23,37 @@ pragma abicoder v2;
 
  */
 
+import {IL2Pool} from "@aave/core-v3/contracts/interfaces/IL2Pool.sol";
+import {IAToken} from "@aave/core-v3/contracts/interfaces/IAToken.sol";
+import {L2Encoder} from "@aave/core-v3/contracts/misc/L2Encoder.sol";
+
+import {IERC20} from "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20.sol";
+import {IAToken} from "@aave/core-v3/contracts/interfaces/IAToken.sol";
+
 contract Main {
-  constructor(address admin) {
+  address admin;
+  IL2Pool Pool;
+  L2Encoder Encoder;
+
+  constructor(address _Pool, address _Encoder) {
     admin = payable(msg.sender);
+    Pool = IL2Pool(_Pool);
+    Encoder = L2Encoder(_Encoder);
   }
 
   receive() external payable {}
 
   struct orderInfo {
-    uint8 orderID;
+    uint128 orderID;
     uint256 tokenBorrowed;
   }
 
   mapping(address => orderInfo) public userPosition;
+
+  function testBorrow(address asset, uint256 amount) public {
+    uint16 referralCode = 0;
+    bytes32 encodedParams = Encoder.encodeSupplyParams(asset, amount, referralCode);
+
+    Pool.borrow(encodedParams);
+  }
 }
