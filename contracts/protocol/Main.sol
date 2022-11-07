@@ -28,32 +28,56 @@ import {IAToken} from "@aave/core-v3/contracts/interfaces/IAToken.sol";
 import {L2Encoder} from "@aave/core-v3/contracts/misc/L2Encoder.sol";
 
 import {IERC20} from "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20.sol";
+import {GPv2SafeERC20} from "@aave/core-v3/contracts/dependencies/gnosis/contracts/GPv2SafeERC20.sol";
 import {IAToken} from "@aave/core-v3/contracts/interfaces/IAToken.sol";
+import {WadRayMath} from "@aave/core-v3/contracts/protocol/libraries/math/WadRayMath.sol";
+
+import {Execution} from "../libraries/Execution.sol";
 
 contract Main {
+  using GPv2SafeERC20 for IERC20;
+  using WadRayMath for uint256;
+
   address admin;
   IL2Pool Pool;
   L2Encoder Encoder;
+  uint16 referralCode;
 
-  constructor(address _Pool, address _Encoder) {
+  constructor(
+    address _Pool,
+    address _Encoder,
+    uint16 _referralCode
+  ) {
     admin = payable(msg.sender);
     Pool = IL2Pool(_Pool);
     Encoder = L2Encoder(_Encoder);
+    referralCode = _referralCode;
   }
 
   receive() external payable {}
 
+  /** explantion
+   * aToken: represents collateral
+   * debtToken: represents borrow
+   * stableDebt
+   * variableDebt
+   */
+
   struct orderInfo {
-    uint128 orderID;
-    uint256 tokenBorrowed;
+    uint128 orderID; // order ID
+    address asset; // asset to Long/Short, do I need it?
+    address aTokenAddress;
+    uint256 aTokenAmount;
+    address debtTokenAddress;
+    uint8 debtTokenType; // 1: stable, 2: variable
+    address debtTokenAmount;
   }
 
   mapping(address => orderInfo) public userPosition;
 
-  function testBorrow(address asset, uint256 amount) public {
-    uint16 referralCode = 0;
+  function testSupply(address asset, uint256 amount) public {
     bytes32 encodedParams = Encoder.encodeSupplyParams(asset, amount, referralCode);
 
-    Pool.borrow(encodedParams);
+    Pool.supply(encodedParams);
   }
 }
