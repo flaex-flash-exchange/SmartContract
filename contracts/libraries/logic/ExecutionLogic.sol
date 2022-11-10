@@ -4,6 +4,6 @@ pragma abicoder v2;
 
 //this library is used to describe the Flash Callback, i.e the logic after contract has the fund
 
-library Execution {
+library ExecutionLogic {
 
 }

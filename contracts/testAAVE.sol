@@ -17,7 +17,7 @@ import {WadRayMath} from "@aave/core-v3/contracts/protocol/libraries/math/WadRay
 
 import {ReentrancyGuard} from "./libraries/utils/ReentrancyGuard.sol";
 
-contract testAAVE {
+contract testAAVE is ReentrancyGuard {
   using GPv2SafeERC20 for IERC20;
   using WadRayMath for uint256;
 
@@ -27,11 +27,13 @@ contract testAAVE {
   IPool L1Pool;
   L2Encoder Encoder;
   uint16 referralCode;
+  uint8 interestRateMode;
 
   constructor(
     address _AddressProvider,
     address _Encoder,
-    uint16 _referralCode
+    uint16 _referralCode, //0
+    uint8 _interestRateMode //Stable: 1, Variable: 2, input: 2
   ) {
     admin = payable(msg.sender);
     AddressProvider = IPoolAddressesProvider(_AddressProvider);
@@ -40,6 +42,7 @@ contract testAAVE {
     L1Pool = IPool(_Pool);
     Encoder = L2Encoder(_Encoder);
     referralCode = _referralCode;
+    interestRateMode = _interestRateMode;
   }
 
   struct OrderInfo {
@@ -47,46 +50,55 @@ contract testAAVE {
     // address asset; // asset to Long/Short, do I need it?
     address aTokenAddress;
     uint256 aTokenAmount;
+    uint256 supplyIndex;
     address debtTokenAddress;
-    uint8 debtTokenType; // 0:none, 1: stable, 2: variable
-    address debtTokenAmount;
-    uint256 supplyIndex; //Normalized Income to calculate interest Rate
+    uint256 debtTokenAmount;
+    uint256 variableBorrowIndex;
+    // uint8 debtTokenType; // 0:none, 1: stable, 2: variable, dont need this because assume all debt is variable
   }
   //map user's address => collateralToken => OrderInfo
   mapping(address => mapping(address => OrderInfo)) public userPosition;
 
-  //map user's address => OrderInfo to test AAVE:
-  mapping(address => OrderInfo) public aavePosition;
-
-  // Map of reserves and their data (underlyingAssetOfReserve => reserveData)
-  //   mapping(address => DataTypes.ReserveData) internal _reserves;
-
-  function _accrueInterestSupply(address user, address asset) internal returns (uint256) {
+  function _accrueInterest(address user, address asset) internal returns (uint256, uint256) {
     //get user's info
-    OrderInfo memory oldOrderInfo = userPosition[user][asset];
+    OrderInfo memory orderInfo = userPosition[user][asset];
 
     //retrieve old supplyIndex & aTokenAmount
-    uint256 oldSupplyIndex = oldOrderInfo.supplyIndex;
-    uint256 oldATokenAmount = oldOrderInfo.aTokenAmount;
+    uint256 oldSupplyIndex = orderInfo.supplyIndex;
+    uint256 oldATokenAmount = orderInfo.aTokenAmount;
 
-    if (oldATokenAmount == 0) {
-      return 0;
+    //retrive old variableBorrowIndex & debtTokenAmount
+    uint256 oldVariableBorrowIndex = orderInfo.variableBorrowIndex;
+    uint256 oldDebtTokenAmount = orderInfo.debtTokenAmount;
+
+    uint256 newATokenAmount = 0;
+    uint256 newDebtTokenAmount = 0;
+
+    if (oldATokenAmount != 0) {
+      //get new borrowIndex, should get normalizedIncome here because of real-time
+      // uint256 newSupplyIndex = Reserve.liquidityIndex;
+      uint256 newSupplyIndex = L1Pool.getReserveNormalizedIncome(asset);
+
+      //update user's new aTokenAmount & borrowIndex
+      newATokenAmount = oldATokenAmount * (newSupplyIndex.rayDiv(oldSupplyIndex));
+      (orderInfo.supplyIndex, orderInfo.aTokenAmount) = (newSupplyIndex, newATokenAmount);
     }
 
-    //get ReserseData
-    DataTypes.ReserveData memory Reserve = L1Pool.getReserveData(asset);
+    if (oldDebtTokenAmount != 0) {
+      uint256 newVariableBorrowIndex = L1Pool.getReserveNormalizedVariableDebt(asset);
 
-    //get new borrowIndex, or current Liquidity Index:
-    uint256 newSupplyIndex = Reserve.liquidityIndex;
+      //update:
+      newDebtTokenAmount = oldDebtTokenAmount * (newVariableBorrowIndex.rayDiv(oldVariableBorrowIndex));
+      (orderInfo.variableBorrowIndex, orderInfo.debtTokenAmount) = (newVariableBorrowIndex, newDebtTokenAmount);
+    }
 
-    //update user's new aTokenAmount & borrowIndex
-    uint256 newATokenAmount = oldATokenAmount * (newSupplyIndex.rayDiv(oldSupplyIndex));
-    (oldOrderInfo.supplyIndex, oldOrderInfo.aTokenAmount) = (newSupplyIndex, newATokenAmount);
+    //get ReserveData
+    //DataTypes.ReserveData memory Reserve = L1Pool.getReserveData(asset);
 
     //write to storage:
-    userPosition[user][asset] = oldOrderInfo;
+    userPosition[user][asset] = orderInfo;
 
-    return newATokenAmount;
+    return (newATokenAmount, newDebtTokenAmount);
   }
 
   function Supply(address asset, uint256 amount) external returns (bool) {
@@ -94,7 +106,7 @@ contract testAAVE {
     require(amount > 0, "Invalid_Amount");
 
     //accrueInterestSupply()
-    _accrueInterestSupply(msg.sender, asset);
+    _accrueInterest(msg.sender, asset);
 
     //transfer amount from msg.sender to address(this)
     IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
@@ -111,27 +123,119 @@ contract testAAVE {
 
     //record user's info
     //get old info:
-    OrderInfo memory oldOrderInfo = userPosition[msg.sender][asset];
+    OrderInfo memory orderInfo = userPosition[msg.sender][asset];
 
-    uint256 oldATokenAmount = oldOrderInfo.aTokenAmount;
+    uint256 oldATokenAmount = orderInfo.aTokenAmount;
 
     //get new Info
     DataTypes.ReserveData memory Reserve = L1Pool.getReserveData(asset);
 
-    oldOrderInfo.aTokenAddress = Reserve.aTokenAddress;
-    oldOrderInfo.aTokenAmount = amount + oldATokenAmount;
-    oldOrderInfo.supplyIndex = Reserve.liquidityIndex;
+    orderInfo.aTokenAddress = Reserve.aTokenAddress;
+    orderInfo.aTokenAmount = amount + oldATokenAmount;
+    orderInfo.supplyIndex = Reserve.liquidityIndex;
 
-    userPosition[msg.sender][asset] = oldOrderInfo;
+    //write
+    userPosition[msg.sender][asset] = orderInfo;
 
     return true;
   }
 
-  function Borrow() external returns (bool) {
+  function Borrow(address asset, uint256 amount) external returns (bool) {
+    //basic check
+    require(amount > 0, "Invalid_Amount");
+
+    //accrueInterestSupply()
+    _accrueInterest(msg.sender, asset);
+
+    //encode:
+    bytes32 encodedParams = Encoder.encodeBorrowParams(asset, amount, interestRateMode, referralCode);
+
+    //call borrow()
+    Pool.borrow(encodedParams);
+
+    //record:
+    //get old
+    OrderInfo memory orderInfo = userPosition[msg.sender][asset];
+
+    uint256 oldDebtToken = orderInfo.debtTokenAmount;
+
+    //get new info:
+    DataTypes.ReserveData memory Reserve = L1Pool.getReserveData(asset);
+
+    orderInfo.debtTokenAddress = Reserve.variableDebtTokenAddress;
+    orderInfo.debtTokenAmount = amount + oldDebtToken;
+    orderInfo.variableBorrowIndex = Reserve.variableBorrowIndex;
+
+    //write
+    userPosition[msg.sender][asset] = orderInfo;
+
     return true;
   }
 
-  function Repay() external returns (bool) {
+  function Repay(address asset, uint256 amount) external returns (bool) {
+    //uint(256) for max
+    //basic check
+    require(amount > 0, "Invalid_Amount");
+
+    //accrueInterestSupply()
+    _accrueInterest(msg.sender, asset);
+
+    //transfer amount from msg.sender to address(this)
+    IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
+
+    //Encoder
+    bytes32 encodedParams = Encoder.encodeBorrowParams(asset, amount, interestRateMode, referralCode);
+
+    // call repay
+    Pool.repay(encodedParams);
+
+    //record
+    //get old:
+    OrderInfo memory orderInfo = userPosition[msg.sender][asset];
+
+    uint256 oldDebtToken = orderInfo.debtTokenAmount;
+
+    //get new info:
+    DataTypes.ReserveData memory Reserve = L1Pool.getReserveData(asset);
+
+    orderInfo.debtTokenAmount = amount == type(uint256).max ? 0 : oldDebtToken - amount;
+    orderInfo.variableBorrowIndex = amount == 0 ? 0 : Reserve.variableBorrowIndex;
+
+    //write
+    userPosition[msg.sender][asset] = orderInfo;
+
+    return true;
+  }
+
+  function Withdraw(address asset, uint256 amount) external nonReentrant returns (bool) {
+    //uint(256) for max
+    //basic check
+    require(amount > 0, "Invalid_Amount");
+
+    //accrueInterestSupply()
+    _accrueInterest(msg.sender, asset);
+
+    //Encoder
+    bytes32 encodedParams = Encoder.encodeWithdrawParams(asset, amount);
+
+    //call withdraw()
+    Pool.withdraw(encodedParams);
+
+    //record
+    //getold
+    OrderInfo memory orderInfo = userPosition[msg.sender][asset];
+
+    uint256 oldATokenAmount = orderInfo.aTokenAmount;
+
+    //get new info:
+    DataTypes.ReserveData memory Reserve = L1Pool.getReserveData(asset);
+
+    orderInfo.aTokenAmount = amount == type(uint256).max ? 0 : oldATokenAmount - amount;
+    orderInfo.supplyIndex = amount == type(uint256).max ? 0 : Reserve.liquidityIndex;
+
+    //write
+    userPosition[msg.sender][asset] = orderInfo;
+
     return true;
   }
 
