@@ -16,10 +16,16 @@ import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAd
 
 contract MainStorage {
   // mapping (pair => tradingPairInfo), ie: ETH/USDC => tradingPairInfo
-  mapping(bytes => Types.tradingPairInfo) internal _tradingPair;
+  mapping(bytes32 => Types.tradingPairInfo) internal _tradingPair;
+
+  // mapping (id => _tradingPairList)
+  mapping(uint256 => bytes32) internal _tradingPairList;
 
   // mapping (user => Token/aToken => orderInfo)
   mapping(address => mapping(address => Types.orderInfo)) internal _position;
+
+  // Maximum number of tradingPair there have been in the protocol. It is the upper bound of the trading pair list
+  uint256 internal _tradingPairCount;
 
   // Aave Address Provider
   IPoolAddressesProvider _AaveAddressProvider;
@@ -34,8 +40,8 @@ contract MainStorage {
   L2Encoder _AaveEncoder;
 
   // Aave Referral Code
-  uint16 internal _AaveReferralCode;
+  uint16 public _AaveReferralCode;
 
   // Aave Interest Rate Mode, None: 0, Stable: 1, Variable: 2
-  uint8 internal _AaveInterestRateMode;
+  uint8 public _AaveInterestRateMode;
 }

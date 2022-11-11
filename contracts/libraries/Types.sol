@@ -16,6 +16,7 @@ library Types {
   /** @dev in-line with Uniswap sorting, ie: (token0 < token1) == true
    */
   struct tradingPairInfo {
+    uint256 id;
     address zeroToken;
     address firstToken;
     uint256 tradingFee;

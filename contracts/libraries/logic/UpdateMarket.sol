@@ -10,17 +10,17 @@ import {L2Encoder} from "@aave/core-v3/contracts/misc/L2Encoder.sol";
 import {Types} from "../Types.sol";
 
 /**
- * @title SupplyLogic library
- * @author Aave
- * @notice Implements the base logic for supply/withdraw
+ * @title Update library
+ * @author Flaex
+ * @notice Implements the logic for update market
  */
 
 library UpdateMarket {
   uint256 constant MAX_INT = type(uint256).max;
 
   // prettier-ignore
-  event MarketUpdated(address zeroAsset, address firstAsset, uint256 tradingFee, uint256 tradingFee_ProtocolShare, uint256 liquidationThreshold, uint256 liquidationProtocolShare, bool isLive);
-  event MarketDropped(address zeroAsset, address firstAsset, bool isLive);
+  event MarketUpdated(uint id, address zeroAsset, address firstAsset, uint256 tradingFee, uint256 tradingFee_ProtocolShare, uint256 liquidationThreshold, uint256 liquidationProtocolShare, bool isLive);
+  event MarketDropped(uint256 id, address zeroAsset, address firstAsset, bool isLive);
 
   function executeInitMarket(
     address zeroAsset,
@@ -54,50 +54,43 @@ library UpdateMarket {
     _AavePool.setUserUseReserveAsCollateral(encodedFirst);
   }
 
+  /// @dev needs to check whether aave and uniswap supports
   function executeUpdateMarket(
-    address zeroAsset,
-    address firstAsset,
-    uint256 tradingFee,
-    uint256 tradingFee_ProtocolShare,
-    uint256 liquidationThreshold,
-    uint256 liquidationProtocolShare,
-    mapping(bytes => Types.tradingPairInfo) storage tradingPair
-  ) external {
-    bytes memory encodedParams = abi.encode(zeroAsset, firstAsset);
+    mapping(bytes32 => Types.tradingPairInfo) storage tradingPair,
+    mapping(uint256 => bytes32) storage _tradingPairList,
+    Types.tradingPairInfo memory params
+  ) external returns (bool) {
+    bytes32 encodedParams = keccak256(abi.encodePacked(params.zeroToken, params.firstToken));
 
-    tradingPair[encodedParams] = Types.tradingPairInfo({
-      zeroToken: zeroAsset,
-      firstToken: firstAsset,
-      tradingFee: tradingFee,
-      tradingFee_ProtocolShare: tradingFee_ProtocolShare,
-      liquidationThreshold: liquidationThreshold,
-      liquidationProtocolShare: liquidationProtocolShare,
-      isLive: true
-    });
+    bool PairExisted = false;
+
+    for (uint256 i = 0; i < params.id; i++) {
+      if (keccak256(abi.encodePacked(_tradingPairList[i])) == encodedParams) {
+        params.id = i;
+        PairExisted = true;
+      }
+    }
+
+    tradingPair[encodedParams] = params;
+    if (!PairExisted) {
+      _tradingPairList[params.id] = encodedParams;
+    }
 
     // prettier-ignore
-    emit MarketUpdated(zeroAsset, firstAsset, tradingFee, tradingFee_ProtocolShare, liquidationThreshold, liquidationProtocolShare, true);
+    emit MarketUpdated(params.id, params.zeroToken, params.firstToken, params.tradingFee, params.tradingFee_ProtocolShare, params.liquidationThreshold, params.liquidationProtocolShare, true);
+
+    return PairExisted;
   }
 
   function executeDropMarket(
     address zeroAsset,
     address firstAsset,
-    mapping(bytes => Types.tradingPairInfo) storage tradingPair
+    mapping(bytes32 => Types.tradingPairInfo) storage tradingPair
   ) external {
-    bytes memory encodedParams = abi.encode(zeroAsset, firstAsset);
+    bytes32 encodedParams = keccak256(abi.encodePacked(zeroAsset, firstAsset));
+
     tradingPair[encodedParams].isLive = false;
 
-    emit MarketDropped(zeroAsset, firstAsset, false);
+    emit MarketDropped(tradingPair[encodedParams].id, zeroAsset, firstAsset, false);
   }
 }
-
-/**
- struct tradingPairInfo {
-    address zeroToken;
-    address firstToken;
-    uint256 tradingFee;
-    uint256 tradingFee_ProtocolShare;
-    uint256 liquidationThreshold;
-    uint256 liquidationProtocolShare;
-    bool isLive;
-  } */

@@ -100,7 +100,7 @@ contract Main is MainStorage, IMain, ReentrancyGuard {
    * @dev basic Aprrove market, which is to:
     - approve Lending Pool to spend our asset & aToken
     - set used as collateral
-   * @inheritdoc	IMain
+   * @inheritdoc IMain
    */
   function basicApprove(address zeroAsset, address firstAsset) external virtual override onlyAdmin {
     UpdateMarket.executeInitMarket(zeroAsset, firstAsset, _AavePool, _AaveL1Pool, _AaveEncoder);
@@ -108,7 +108,7 @@ contract Main is MainStorage, IMain, ReentrancyGuard {
 
   /**
    * @dev init/update Market
-   * @inheritdoc	IMain
+   * @inheritdoc IMain
    */
   function updateMarket(
     address Asset0,
@@ -121,20 +121,31 @@ contract Main is MainStorage, IMain, ReentrancyGuard {
     //in-line with uniswap
     (address zeroAsset, address firstAsset) = Asset0 < Asset1 ? (Asset0, Asset1) : (Asset1, Asset0);
 
-    UpdateMarket.executeUpdateMarket(
-      zeroAsset,
-      firstAsset,
-      tradingFee,
-      tradingFee_ProtocolShare,
-      liquidationThreshold,
-      liquidationProtocolShare,
-      _tradingPair
-    );
+    if (
+      !(
+        UpdateMarket.executeUpdateMarket(
+          _tradingPair,
+          _tradingPairList,
+          Types.tradingPairInfo({
+            id: _tradingPairCount,
+            zeroToken: zeroAsset,
+            firstToken: firstAsset,
+            tradingFee: tradingFee,
+            tradingFee_ProtocolShare: tradingFee_ProtocolShare,
+            liquidationThreshold: liquidationThreshold,
+            liquidationProtocolShare: liquidationProtocolShare,
+            isLive: true
+          })
+        )
+      )
+    ) {
+      _tradingPairCount++;
+    }
   }
 
   /**
    * @dev drop market, isLive -> False
-   * @inheritdoc	IMain
+   * @inheritdoc IMain
    */
   function dropMarket(address Asset0, address Asset1) external virtual override onlyAdmin {
     //in-line with uniswap
