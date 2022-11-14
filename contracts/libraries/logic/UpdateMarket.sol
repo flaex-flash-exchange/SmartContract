@@ -9,6 +9,9 @@ import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
 import {L2Encoder} from "@aave/core-v3/contracts/misc/L2Encoder.sol";
 import {Types} from "../Types.sol";
 
+import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+
 /**
  * @title Update library
  * @author Flaex
@@ -25,47 +28,53 @@ library UpdateMarket {
   function executeInitMarket(
     address zeroAsset,
     address firstAsset,
-    IL2Pool _AavePool,
-    IPool _AaveL1Pool,
-    L2Encoder _AaveEncoder
+    IL2Pool AavePool,
+    IPool AaveL1Pool,
+    L2Encoder AaveEncoder,
+    IUniswapV3Factory UniFactory,
+    uint24 uniFee
   ) external {
-    // approve zeroAsset
-    IERC20(zeroAsset).approve(address(_AavePool), MAX_INT);
+    IUniswapV3Pool UniPool = IUniswapV3Pool(UniFactory.getPool(zeroAsset, firstAsset, uniFee));
+
+    // approve zeroAsset for both AAVE Pool and Uniswap Pool
+    IERC20(zeroAsset).approve(address(AavePool), MAX_INT);
+    IERC20(zeroAsset).approve(address(UniPool), MAX_INT);
 
     // approve aZeroAsset
-    DataTypes.ReserveData memory reserve_zeroAsset = _AaveL1Pool.getReserveData(zeroAsset);
+    DataTypes.ReserveData memory reserve_zeroAsset = AaveL1Pool.getReserveData(zeroAsset);
     address aZeroAsset = reserve_zeroAsset.aTokenAddress;
-    IERC20(aZeroAsset).approve(address(_AavePool), MAX_INT);
+    IERC20(aZeroAsset).approve(address(AavePool), MAX_INT);
 
     //set used as collateral
-    bytes32 encodedZero = _AaveEncoder.encodeSetUserUseReserveAsCollateral(zeroAsset, true);
-    _AavePool.setUserUseReserveAsCollateral(encodedZero);
+    bytes32 encodedZero = AaveEncoder.encodeSetUserUseReserveAsCollateral(zeroAsset, true);
+    AavePool.setUserUseReserveAsCollateral(encodedZero);
 
-    // approve firstAsset
-    IERC20(firstAsset).approve(address(_AavePool), MAX_INT);
+    // approve firstAsset for both AAVE Pool and Uniswap Pool
+    IERC20(firstAsset).approve(address(AavePool), MAX_INT);
+    IERC20(firstAsset).approve(address(UniPool), MAX_INT);
 
     // approve aFirstAsset
-    DataTypes.ReserveData memory reserve_firstAsset = _AaveL1Pool.getReserveData(firstAsset);
+    DataTypes.ReserveData memory reserve_firstAsset = AaveL1Pool.getReserveData(firstAsset);
     address aFirstAsset = reserve_firstAsset.aTokenAddress;
-    IERC20(aFirstAsset).approve(address(_AavePool), MAX_INT);
+    IERC20(aFirstAsset).approve(address(AavePool), MAX_INT);
 
     //set used as collateral
-    bytes32 encodedFirst = _AaveEncoder.encodeSetUserUseReserveAsCollateral(firstAsset, true);
-    _AavePool.setUserUseReserveAsCollateral(encodedFirst);
+    bytes32 encodedFirst = AaveEncoder.encodeSetUserUseReserveAsCollateral(firstAsset, true);
+    AavePool.setUserUseReserveAsCollateral(encodedFirst);
   }
 
-  /// @dev needs to check whether aave and uniswap supports
+  /// @dev needs to check whether aave and uniswap supports ?
   function executeUpdateMarket(
-    mapping(bytes32 => Types.tradingPairInfo) storage tradingPair,
-    mapping(uint256 => bytes32) storage _tradingPairList,
+    mapping(bytes => Types.tradingPairInfo) storage tradingPair,
+    mapping(uint256 => bytes) storage tradingPairList,
     Types.tradingPairInfo memory params
   ) external returns (bool) {
-    bytes32 encodedParams = keccak256(abi.encodePacked(params.zeroToken, params.firstToken));
+    bytes memory encodedParams = abi.encode(params.zeroToken, params.firstToken);
 
     bool PairExisted = false;
 
     for (uint256 i = 0; i < params.id; i++) {
-      if (keccak256(abi.encodePacked(_tradingPairList[i])) == encodedParams) {
+      if (keccak256(abi.encode(tradingPairList[i])) == keccak256(encodedParams)) {
         params.id = i;
         PairExisted = true;
       }
@@ -73,7 +82,7 @@ library UpdateMarket {
 
     tradingPair[encodedParams] = params;
     if (!PairExisted) {
-      _tradingPairList[params.id] = encodedParams;
+      tradingPairList[params.id] = encodedParams;
     }
 
     // prettier-ignore
@@ -85,9 +94,9 @@ library UpdateMarket {
   function executeDropMarket(
     address zeroAsset,
     address firstAsset,
-    mapping(bytes32 => Types.tradingPairInfo) storage tradingPair
+    mapping(bytes => Types.tradingPairInfo) storage tradingPair
   ) external {
-    bytes32 encodedParams = keccak256(abi.encodePacked(zeroAsset, firstAsset));
+    bytes memory encodedParams = abi.encode(zeroAsset, firstAsset);
 
     tradingPair[encodedParams].isLive = false;
 

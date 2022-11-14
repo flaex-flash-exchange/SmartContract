@@ -6,6 +6,7 @@ import {IL2Pool} from "@aave/core-v3/contracts/interfaces/IL2Pool.sol";
 import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
 import {L2Encoder} from "@aave/core-v3/contracts/misc/L2Encoder.sol";
 import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
+import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 
 /**
  * @title Storage
@@ -15,17 +16,20 @@ import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAd
  */
 
 contract MainStorage {
-  // mapping (pair => tradingPairInfo), ie: ETH/USDC => tradingPairInfo
-  mapping(bytes32 => Types.tradingPairInfo) internal _tradingPair;
+  // mapping (pair encoded => tradingPairInfo), ie: ETH/USDC => tradingPairInfo
+  mapping(bytes => Types.tradingPairInfo) internal _tradingPair;
 
   // mapping (id => _tradingPairList)
-  mapping(uint256 => bytes32) internal _tradingPairList;
+  mapping(uint256 => bytes) internal _tradingPairList;
 
   // mapping (user => Token/aToken => orderInfo)
-  mapping(address => mapping(address => Types.orderInfo)) internal _position;
+  mapping(address => mapping(bytes => Types.orderInfo)) internal _position;
 
   // Maximum number of tradingPair there have been in the protocol. It is the upper bound of the trading pair list
   uint256 internal _tradingPairCount;
+
+  // Maximum Margin Level
+  uint256 internal _maxMarginLevel;
 
   // Aave Address Provider
   IPoolAddressesProvider _AaveAddressProvider;
@@ -44,4 +48,7 @@ contract MainStorage {
 
   // Aave Interest Rate Mode, None: 0, Stable: 1, Variable: 2
   uint8 public _AaveInterestRateMode;
+
+  // uniswap Factory
+  IUniswapV3Factory _UniFactory;
 }

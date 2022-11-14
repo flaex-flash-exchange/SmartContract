@@ -8,6 +8,7 @@ import {IAddressesProvider} from "../interfaces/IAddressesProvider.sol";
 contract AddressesProvider is Ownable, IAddressesProvider {
   //Flaex Stuff:
   address SuperAdmin;
+  address Main;
 
   //AAVE Stuff:
   address AaveAddressProvider;
@@ -16,9 +17,9 @@ contract AddressesProvider is Ownable, IAddressesProvider {
   //Uniswap Stuff
   address UniFactory;
 
-  constructor(address Owner) {
+  constructor(address Owner, address Admin) {
     transferOwnership(Owner);
-    SuperAdmin = Owner;
+    SuperAdmin = Admin;
   }
 
   function getAaveAddressProvider() external view override returns (address) {
@@ -59,5 +60,15 @@ contract AddressesProvider is Ownable, IAddressesProvider {
     address oldSuperAdmin = SuperAdmin;
     SuperAdmin = newSuperAdmin;
     emit SuperAdminSet(oldSuperAdmin, newSuperAdmin);
+  }
+
+  function getMain() external view override returns (address) {
+    return Main;
+  }
+
+  function setMain(address newMain) external override onlyOwner {
+    address oldMain = Main;
+    Main = newMain;
+    emit MainSet(oldMain, newMain);
   }
 }

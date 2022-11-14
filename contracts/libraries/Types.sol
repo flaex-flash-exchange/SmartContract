@@ -7,10 +7,13 @@ library Types {
    * short eth: supply Stable, borrow ETH
    */
   struct orderInfo {
+    address aTokenAddress;
     uint256 aTokenAmount;
     uint256 aTokenIndex;
+    address debtTokenAddress;
     uint256 debtTokenAmount;
     uint256 debtTokenIndex;
+    uint256 rewards;
   }
 
   /** @dev in-line with Uniswap sorting, ie: (token0 < token1) == true
@@ -24,5 +27,20 @@ library Types {
     uint256 liquidationThreshold;
     uint256 liquidationProtocolShare;
     bool isLive;
+  }
+
+  struct executeOpen {
+    address baseToken;
+    address quoteToken;
+    uint256 baseMargin;
+    uint256 maxQuoteTokenAmount;
+    uint24 uniFee;
+    uint256 marginLevel;
+    uint256 maxMarginLevel;
+  }
+
+  enum DIRECTION {
+    OPEN,
+    CLOSE
   }
 }

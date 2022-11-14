@@ -6,6 +6,7 @@ interface IAddressesProvider {
   event AaveEncoderSet(address oldAaveEncoder, address newAaveEncoder);
   event UniFactorySet(address oldUniFactory, address newUniFactory);
   event SuperAdminSet(address oldSuperAdmin, address newSuperAdmin);
+  event MainSet(address oldMain, address newMain);
 
   function getAaveAddressProvider() external view returns (address);
 
@@ -22,4 +23,8 @@ interface IAddressesProvider {
   function getSuperAdmin() external view returns (address);
 
   function setSuperAdmin(address newSuperAdmin) external;
+
+  function getMain() external view returns (address);
+
+  function setMain(address newMain) external;
 }
