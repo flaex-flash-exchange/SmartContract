@@ -28,9 +28,6 @@ contract MainStorage {
   // Maximum number of tradingPair there have been in the protocol. It is the upper bound of the trading pair list
   uint256 internal _tradingPairCount;
 
-  // Maximum Margin Level
-  uint256 internal _maxMarginLevel;
-
   // Aave Address Provider
   IPoolAddressesProvider _AaveAddressProvider;
 
@@ -47,7 +44,7 @@ contract MainStorage {
   uint16 public _AaveReferralCode;
 
   // Aave Interest Rate Mode, None: 0, Stable: 1, Variable: 2
-  uint8 public _AaveInterestRateMode;
+  uint256 public _AaveInterestRateMode;
 
   // uniswap Factory
   IUniswapV3Factory _UniFactory;

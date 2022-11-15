@@ -17,27 +17,26 @@ library ValidationLogic {
     IAddressesProvider FLAEX_PROVIDER,
     mapping(bytes => Types.tradingPairInfo) storage tradingPair,
     Types.executeOpen memory params
-  ) external view {
-    IPool AavePool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
+  ) external view returns (uint24) {
+    IPool AaveL1Pool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
     IUniswapV3Factory UniFactory = IUniswapV3Factory(FLAEX_PROVIDER.getUniFactory());
 
     // trading pair isLive
-    (address zeroToken, address firstToken) = params.baseToken < params.quoteToken
-      ? (params.baseToken, params.quoteToken)
-      : (params.quoteToken, params.baseToken);
-
-    bytes memory encodedParam = abi.encode(zeroToken, firstToken);
+    bytes memory encodedParam = params.baseToken < params.quoteToken
+      ? abi.encode(params.baseToken, params.quoteToken)
+      : abi.encode(params.quoteToken, params.baseToken);
     require(tradingPair[encodedParam].isLive, "TradingPair_Is_Not_Live");
-    require(params.marginLevel > 0 && params.marginLevel <= params.maxMarginLevel, "Invalid_Margin");
+
+    require(params.marginLevel > 0 && params.marginLevel <= tradingPair[encodedParam].maxMarginLevel, "Invalid_Margin");
 
     // sanity check again to see if aave supports
-    DataTypes.ReserveConfigurationMap memory ReserveBaseToken = AavePool.getConfiguration(params.baseToken);
-    DataTypes.ReserveConfigurationMap memory ReserveQuoteToken = AavePool.getConfiguration(params.quoteToken);
+    DataTypes.ReserveConfigurationMap memory ReserveBaseToken = AaveL1Pool.getConfiguration(params.baseToken);
+    DataTypes.ReserveConfigurationMap memory ReserveQuoteToken = AaveL1Pool.getConfiguration(params.quoteToken);
 
-    (bool baseIsActive, bool baseIsFrozen, , , bool baseIsPaused) = ReserveBaseToken.getFlags();
+    (bool baseIsActive, , , , bool baseIsPaused) = ReserveBaseToken.getFlags();
     (bool QuoteIsActive, , , , bool QuoteIsPaused) = ReserveQuoteToken.getFlags();
 
-    require(baseIsActive && !baseIsFrozen && !baseIsPaused, "Aave_Base_Reserve_Is_Not_live");
+    require(baseIsActive && !baseIsPaused, "Aave_Base_Reserve_Is_Not_live");
     require(QuoteIsActive && !QuoteIsPaused, "Aave_Quote_Reserve_Is_Not_live");
 
     // sanity check again to see if uniswap supports
@@ -46,5 +45,7 @@ library ValidationLogic {
       UniFactory.getPool(params.baseToken, params.quoteToken, params.uniFee) != address(0),
       "Uniswap_Reserve_Is_Not_Live"
     );
+
+    return tradingPair[encodedParam].tradingFee;
   }
 }

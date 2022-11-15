@@ -11,8 +11,10 @@ import {L2Encoder} from "@aave/core-v3/contracts/misc/L2Encoder.sol";
 import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
 
 import {IERC20} from "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20.sol";
+import {GPv2SafeERC20} from "@aave/core-v3/contracts/dependencies/gnosis/contracts/GPv2SafeERC20.sol";
 
 import {VaultStorage} from "./VaultStorage.sol";
+import {IVault} from "../interfaces/IVault.sol";
 
 /**
  * @title Vault Contract
@@ -21,7 +23,9 @@ import {VaultStorage} from "./VaultStorage.sol";
  * @dev
  */
 
-contract Vault {
+contract Vault is IVault {
+  using GPv2SafeERC20 for IERC20;
+
   IAddressesProvider public immutable FLAEX_PROVIDER;
 
   uint256 internal constant MAX_INT = type(uint256).max;
@@ -69,8 +73,16 @@ contract Vault {
     ICreditDelegationToken(debtToken).approveDelegation(FLAEX_PROVIDER.getMain(), MAX_INT);
   }
 
-  function transferToVault(address asset, uint256 amount) external onlyMain {
-    // IERC20(asset).transferFrom(sender, recipient, amount);
+  /**
+   * @dev transfer fee from Main to Vault, pull call because we need to seperate protocol fee from distributable fee
+   * @inheritdoc IVault
+   */
+  function transferFeeToVault(
+    address asset,
+    address from,
+    uint256 amount
+  ) external override onlyMain {
+    IERC20(asset).safeTransferFrom(from, address(this), amount);
   }
 
   function withdrawFromVault(address asset, uint256 amount) external onlyMain {}

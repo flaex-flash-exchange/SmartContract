@@ -9,6 +9,7 @@ contract AddressesProvider is Ownable, IAddressesProvider {
   //Flaex Stuff:
   address SuperAdmin;
   address Main;
+  address Vault;
 
   //AAVE Stuff:
   address AaveAddressProvider;
@@ -70,5 +71,15 @@ contract AddressesProvider is Ownable, IAddressesProvider {
     address oldMain = Main;
     Main = newMain;
     emit MainSet(oldMain, newMain);
+  }
+
+  function getVault() external view override returns (address) {
+    return Vault;
+  }
+
+  function setVault(address newVault) external override onlyOwner {
+    address oldVault = Vault;
+    Vault = newVault;
+    emit VaultSet(oldVault, newVault);
   }
 }

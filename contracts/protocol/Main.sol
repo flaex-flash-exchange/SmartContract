@@ -12,6 +12,7 @@ import {IMain} from "../interfaces/IMain.sol";
 import {Types} from "../libraries/Types.sol";
 import {Vault} from "../vault/Vault.sol";
 import {ValidationLogic} from "../libraries/logic/ValidationLogic.sol";
+import {SwapCallback} from "../libraries/logic/SwapCallback.sol";
 
 //Aave Stuff:
 import {IL2Pool} from "@aave/core-v3/contracts/interfaces/IL2Pool.sol";
@@ -45,7 +46,6 @@ import "@uniswap/v3-periphery/contracts/libraries/CallbackValidation.sol";
   * @dev Admin functions callable as defined in AddressesProvider
  */
 
-// contract Main is ReentrancyGuard, IUniswapV3SwapCallback, PeripheryPayments {
 contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
   using GPv2SafeERC20 for IERC20;
   using WadRayMath for uint256;
@@ -105,10 +105,11 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
   function updateMarket(
     address Asset0,
     address Asset1,
-    uint256 tradingFee,
+    uint24 tradingFee,
     uint256 tradingFee_ProtocolShare,
     uint256 liquidationThreshold,
-    uint256 liquidationProtocolShare
+    uint256 liquidationProtocolShare,
+    uint256 maxMarginLevel
   ) external virtual override onlyAdmin {
     //in-line with uniswap
     (address zeroAsset, address firstAsset) = Asset0 < Asset1 ? (Asset0, Asset1) : (Asset1, Asset0);
@@ -126,6 +127,7 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
             tradingFee_ProtocolShare: tradingFee_ProtocolShare,
             liquidationThreshold: liquidationThreshold,
             liquidationProtocolShare: liquidationProtocolShare,
+            maxMarginLevel: maxMarginLevel,
             isLive: true
           })
         )
@@ -159,15 +161,6 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
     return allMarkets;
   }
 
-  /// @inheritdoc IMain
-  // function accrueInterest(
-  //   address user,
-  //   address baseToken,
-  //   address quoteToken
-  // ) public virtual override {
-  //   ExecutionLogic.executeAccrue(_AaveL1Pool, _position[user][asset]);
-  // }
-
   /**
    * @notice open order
    * @dev technically there's only '1 side' of trading, ie: shorting eth/usdc meaning longing usdc/eth and so:
@@ -180,7 +173,7 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
      + end quote
    * @param baseToken base currency, ie: eth if open on eth/usdc
    * @param quoteToken quote currency, ie: usdc if open on eth/usdc
-   * @param baseMargin initial margin, must be in base currency
+   * @param baseMarginAmount initial margin, must be in base currency
    * @param maxQuoteTokenAmount maximum accepted output
    * @param uniFee either 500, 3000 or 10000 (0.05% - 0.3% - 0.1%), uint24
    * @param marginLevel margin level, scaled-up by wad (1e18)
@@ -189,23 +182,25 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
   function openExactOutput(
     address baseToken,
     address quoteToken,
-    uint256 baseMargin,
+    uint256 baseMarginAmount,
     uint256 maxQuoteTokenAmount,
     uint24 uniFee,
     uint256 marginLevel
   ) external virtual override nonReentrant {
     // elegibility check
-    ValidationLogic.executeOpenCheck(
+    uint24 tradingFee = ValidationLogic.executeOpenCheck(
       FLAEX_PROVIDER,
       _tradingPair,
       Types.executeOpen({
         baseToken: baseToken,
         quoteToken: quoteToken,
-        baseMargin: baseMargin,
+        baseMarginAmount: baseMarginAmount,
         maxQuoteTokenAmount: maxQuoteTokenAmount,
+        tradingFee: 0, // it's okay because we haven't touched this
         uniFee: uniFee,
-        marginLevel: marginLevel,
-        maxMarginLevel: _maxMarginLevel
+        AaveReferralCode: _AaveReferralCode,
+        AaveInterestRateMode: _AaveInterestRateMode,
+        marginLevel: marginLevel
       })
     );
 
@@ -216,8 +211,23 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
       _position[msg.sender][encodedParams].aTokenAmount != 0 ||
       _position[msg.sender][encodedParams].debtTokenAmount != 0
     ) {
-      ExecutionLogic.executeAccrue(_AaveL1Pool, _position[msg.sender][encodedParams]);
+      ExecutionLogic.executeAccrue(FLAEX_PROVIDER, _position[msg.sender][encodedParams]);
     }
+
+    ExecutionLogic.executeOpenExactInput(
+      FLAEX_PROVIDER,
+      Types.executeOpen({
+        baseToken: baseToken,
+        quoteToken: quoteToken,
+        baseMarginAmount: baseMarginAmount,
+        maxQuoteTokenAmount: maxQuoteTokenAmount,
+        tradingFee: tradingFee, // needs to be updated
+        uniFee: uniFee,
+        AaveReferralCode: _AaveReferralCode,
+        AaveInterestRateMode: _AaveInterestRateMode,
+        marginLevel: marginLevel
+      })
+    );
   }
 
   function uniswapV3SwapCallback(
@@ -234,7 +244,16 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
 
     CallbackValidation.verifyCallback(address(_UniFactory), params.baseToken, params.quoteToken, params.uniFee);
 
-    if (direction == Types.DIRECTION.OPEN) {}
+    if (direction == Types.DIRECTION.OPEN) {
+      _position[trader][abi.encode(params.baseToken, params.quoteToken)] = SwapCallback.OpenCallback(
+        FLAEX_PROVIDER,
+        trader,
+        amount0Delta,
+        amount1Delta,
+        params,
+        _position[trader][abi.encode(params.baseToken, params.quoteToken)]
+      );
+    }
   }
 
   receive() external payable {}

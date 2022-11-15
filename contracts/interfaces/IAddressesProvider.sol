@@ -7,6 +7,7 @@ interface IAddressesProvider {
   event UniFactorySet(address oldUniFactory, address newUniFactory);
   event SuperAdminSet(address oldSuperAdmin, address newSuperAdmin);
   event MainSet(address oldMain, address newMain);
+  event VaultSet(address oldVault, address newVault);
 
   function getAaveAddressProvider() external view returns (address);
 
@@ -27,4 +28,8 @@ interface IAddressesProvider {
   function getMain() external view returns (address);
 
   function setMain(address newMain) external;
+
+  function getVault() external view returns (address);
+
+  function setVault(address newVault) external;
 }

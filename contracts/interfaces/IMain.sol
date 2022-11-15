@@ -13,10 +13,11 @@ interface IMain {
   function updateMarket(
     address Asset0,
     address Asset1,
-    uint256 tradingFee,
+    uint24 tradingFee,
     uint256 tradingFee_ProtocolShare,
     uint256 liquidationThreshold,
-    uint256 liquidationProtocolShare
+    uint256 liquidationProtocolShare,
+    uint256 maxMarginLevel
   ) external;
 
   function dropMarket(address Asset0, address Asset1) external;
@@ -26,7 +27,7 @@ interface IMain {
   function openExactOutput(
     address baseToken,
     address quoteToken,
-    uint256 baseMargin,
+    uint256 baseMarginAmount,
     uint256 maxQuoteTokenAmount,
     uint24 uniFee,
     uint256 marginLevel

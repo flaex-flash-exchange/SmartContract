@@ -6,11 +6,15 @@ import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
 import {WadRayMath} from "@aave/core-v3/contracts/protocol/libraries/math/WadRayMath.sol";
 import {GPv2SafeERC20} from "@aave/core-v3/contracts/dependencies/gnosis/contracts/GPv2SafeERC20.sol";
 import {IERC20} from "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20.sol";
-import {PercentageMath} from "node_modules/@aave/core-v3/contracts/protocol/libraries/math/PercentageMath.sol";
+import {PercentageMath} from "@aave/core-v3/contracts/protocol/libraries/math/PercentageMath.sol";
 
 import "@uniswap/v3-periphery/contracts/libraries/CallbackValidation.sol";
 import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import {SafeCast} from "@uniswap/v3-core/contracts/libraries/SafeCast.sol";
+
+import {IAddressesProvider} from "../../interfaces/IAddressesProvider.sol";
+import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
+import {IVault} from "../../interfaces/IVault.sol";
 
 /**
  * @title Execution Libraries
@@ -35,7 +39,9 @@ library ExecutionLogic {
    * @dev we need to self-accrue interest to our users
    * @param position position
    */
-  function executeAccrue(IPool L1Pool, Types.orderInfo storage position) external {
+  function executeAccrue(IAddressesProvider FLAEX_PROVIDER, Types.orderInfo storage position) external {
+    IPool AaveL1Pool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
+
     uint256 oldATokenAmount = position.aTokenAmount;
     uint256 oldATokenIndex = position.aTokenIndex;
 
@@ -48,14 +54,14 @@ library ExecutionLogic {
     // get new Indexes:
     if (oldATokenAmount != 0) {
       //get new borrowIndex, should get normalizedIncome here because of real-time
-      uint256 newATokenIndex = L1Pool.getReserveNormalizedIncome(position.aTokenAddress);
+      uint256 newATokenIndex = AaveL1Pool.getReserveNormalizedIncome(position.aTokenAddress);
 
       newATokenAmount = oldATokenAmount * (newATokenIndex.rayDiv(oldATokenIndex));
       (position.aTokenIndex, position.aTokenAmount) = (newATokenIndex, newATokenAmount);
     }
 
     if (oldDebtTokenAmount != 0) {
-      uint256 newDebtTokenIndex = L1Pool.getReserveNormalizedVariableDebt(position.debtTokenAddress);
+      uint256 newDebtTokenIndex = AaveL1Pool.getReserveNormalizedVariableDebt(position.debtTokenAddress);
 
       newDebtTokenAmount = oldDebtTokenAmount * (newDebtTokenIndex.rayDiv(oldDebtTokenIndex));
       (position.debtTokenIndex, position.debtTokenAmount) = (newDebtTokenIndex, newDebtTokenAmount);
@@ -67,38 +73,19 @@ library ExecutionLogic {
    *
    */
   function executeOpenExactInput(
-    address Vault,
-    // IPool AavePool,
-    IUniswapV3Factory UniFactory,
+    IAddressesProvider FLAEX_PROVIDER,
     Types.executeOpen memory params // Types.tradingPairInfo storage position
   ) external {
+    IVault Vault = IVault(FLAEX_PROVIDER.getVault());
+    IUniswapV3Factory UniFactory = IUniswapV3Factory(FLAEX_PROVIDER.getUniFactory());
+
     // transfer from msg.sender directly to Vault ignoring address(this)
-    IERC20(params.baseToken).safeTransferFrom(msg.sender, Vault, params.baseMargin);
+    IERC20(params.baseToken).safeTransferFrom(msg.sender, address(Vault), params.baseMarginAmount);
 
     // borrowFlashAmount = baseMargin * marginLevel
-    uint256 borrowFlashAmount = params.baseMargin.percentMul(params.marginLevel);
+    uint256 borrowFlashAmount = params.baseMarginAmount.percentMul(params.marginLevel);
 
     IUniswapV3Pool UniPool = IUniswapV3Pool(UniFactory.getPool(params.baseToken, params.quoteToken, params.uniFee));
-
-    //(int256 amount0Delta, int256 amount1Delta) = UniPool.swap(address(this), zeroForOne, amountSpecified, sqrtPriceLimitX96, data);
-    // amountSpecified: positive for exactInput, negative for exactOutput
-    // amountSpecified = -amountOut.toInt(256) = -borrowFlashAmount
-    // sqrtPriceLimitX96:
-    /**
-      sqrtPriceLimitX96 == 0
-                    ? (zeroForOne ? TickMath.MIN_SQRT_RATIO + 1 : TickMath.MAX_SQRT_RATIO - 1)
-                    : sqrtPriceLimitX96
-     */
-
-    /**
-      uint256 amountOutReceived;
-        (amountIn, amountOutReceived) = zeroForOne
-            ? (uint256(amount0Delta), uint256(-amount1Delta))
-            : (uint256(amount1Delta), uint256(-amount0Delta));
-
-      require(amountIn <= params.amountInMaximum, 'Too much requested');
-
-     */
 
     // initialize Flash
     bool zeroForOne = params.baseToken > params.quoteToken;
