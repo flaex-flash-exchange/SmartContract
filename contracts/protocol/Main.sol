@@ -235,7 +235,7 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
     if (direction == Types.DIRECTION.OPEN) {
       /// @dev this is the call back verification to make sure msg.sender is Uniswap Pool
       CallbackValidation.verifyCallback(
-        address(_UniFactory),
+        FLAEX_PROVIDER.getUniFactory(),
         openParams.baseToken,
         openParams.quoteToken,
         openParams.uniFee
@@ -245,7 +245,7 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
     } else if (direction == Types.DIRECTION.CLOSE) {
       /// @dev this is the call back verification to make sure msg.sender is Uniswap Pool
       CallbackValidation.verifyCallback(
-        address(_UniFactory),
+        FLAEX_PROVIDER.getUniFactory(),
         closeParams.baseToken,
         closeParams.quoteToken,
         closeParams.uniFee
