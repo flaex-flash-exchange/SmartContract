@@ -32,4 +32,12 @@ interface IMain {
     uint24 uniFee,
     uint256 marginLevel
   ) external;
+
+  function closeExactInput(
+    address baseToken,
+    address quoteToken,
+    uint256 baseTokenAmount,
+    uint256 minQuoteTokenAmount,
+    uint24 uniFee
+  ) external;
 }

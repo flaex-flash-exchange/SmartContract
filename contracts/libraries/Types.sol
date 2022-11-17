@@ -41,6 +41,16 @@ library Types {
     uint256 marginLevel;
   }
 
+  struct executeClose {
+    address baseToken;
+    address quoteToken;
+    uint256 baseTokenAmount;
+    uint256 minQuoteTokenAmount;
+    uint24 tradingFee;
+    uint24 uniFee;
+    uint256 AaveInterestRateMode;
+  }
+
   enum DIRECTION {
     OPEN,
     CLOSE

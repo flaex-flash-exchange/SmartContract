@@ -11,6 +11,10 @@ import {Types} from "../Types.sol";
 
 import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
+import {IAddressesProvider} from "../../interfaces/IAddressesProvider.sol";
+import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
+import {L2Encoder} from "@aave/core-v3/contracts/misc/L2Encoder.sol";
+import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 
 /**
  * @title Update library
@@ -26,15 +30,17 @@ library UpdateMarket {
   event MarketDropped(uint256 id, address zeroAsset, address firstAsset, bool isLive);
 
   function executeInitMarket(
+    IAddressesProvider FLAEX_PROVIDER,
     address zeroAsset,
     address firstAsset,
-    IL2Pool AavePool,
-    IPool AaveL1Pool,
-    L2Encoder AaveEncoder,
-    IUniswapV3Factory UniFactory,
     uint24 uniFee
   ) external {
-    IUniswapV3Pool UniPool = IUniswapV3Pool(UniFactory.getPool(zeroAsset, firstAsset, uniFee));
+    IL2Pool AavePool = IL2Pool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
+    IPool AaveL1Pool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
+    L2Encoder AaveEncoder = L2Encoder(FLAEX_PROVIDER.getAaveEncoder());
+    IUniswapV3Pool UniPool = IUniswapV3Pool(
+      IUniswapV3Factory(FLAEX_PROVIDER.getUniFactory()).getPool(zeroAsset, firstAsset, uniFee)
+    );
 
     // approve zeroAsset for both AAVE Pool and Uniswap Pool
     IERC20(zeroAsset).approve(address(AavePool), MAX_INT);

@@ -2,133 +2,175 @@
 pragma solidity ^0.8.10;
 
 import {Types} from "../Types.sol";
-import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
-import {WadRayMath} from "@aave/core-v3/contracts/protocol/libraries/math/WadRayMath.sol";
-import {GPv2SafeERC20} from "@aave/core-v3/contracts/dependencies/gnosis/contracts/GPv2SafeERC20.sol";
-import {IERC20} from "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20.sol";
+import {IAddressesProvider} from "../../interfaces/IAddressesProvider.sol";
+import {ValidationLogic} from "../../libraries/logic/ValidationLogic.sol";
+import {AccrueLogic} from "../../libraries/logic/AccrueLogic.sol";
+
+import "@aave/core-v3/contracts/dependencies/gnosis/contracts/GPv2SafeERC20.sol";
 import {PercentageMath} from "@aave/core-v3/contracts/protocol/libraries/math/PercentageMath.sol";
 
 import "@uniswap/v3-periphery/contracts/libraries/CallbackValidation.sol";
 import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import {SafeCast} from "@uniswap/v3-core/contracts/libraries/SafeCast.sol";
 
-import {IAddressesProvider} from "../../interfaces/IAddressesProvider.sol";
-import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
-import {IVault} from "../../interfaces/IVault.sol";
-
 /**
  * @title Execution Libraries
  * @author Flaex
- * @notice Implements the logic for long/short execution
+ * @notice Implements the logic for long/short/liquidation execution
  */
 
 library ExecutionLogic {
   using GPv2SafeERC20 for IERC20;
-  using WadRayMath for uint256;
   using PercentageMath for uint256;
   using SafeCast for uint256;
+
+  // prettier-ignore
+  event OrderOpened(address indexed trader, address baseToken, address quoteToken, uint256 baseMarginAmount, uint256 marginLevel, uint baseTokenAmount, uint quoteTokenAmount);
+  // prettier-ignore
+  event OrderClosed(address indexed trader, address baseToken, address quoteToken, uint baseTokenAmount, uint quoteTokenAmount);
 
   /// @dev The minimum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MIN_TICK)
   uint160 internal constant MIN_SQRT_RATIO = 4295128739;
   /// @dev The maximum value that can be returned from #getSqrtRatioAtTick. Equivalent to getSqrtRatioAtTick(MAX_TICK)
   uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
 
-  // direction
-
-  /**
-   * @dev we need to self-accrue interest to our users
-   * @param position position
-   */
-  function executeAccrue(IAddressesProvider FLAEX_PROVIDER, Types.orderInfo storage position) external {
-    IPool AaveL1Pool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
-
-    uint256 oldATokenAmount = position.aTokenAmount;
-    uint256 oldATokenIndex = position.aTokenIndex;
-
-    uint256 oldDebtTokenAmount = position.debtTokenAmount;
-    uint256 oldDebtTokenIndex = position.debtTokenIndex;
-
-    uint256 newATokenAmount = 0;
-    uint256 newDebtTokenAmount = 0;
-
-    // get new Indexes:
-    if (oldATokenAmount != 0) {
-      //get new borrowIndex, should get normalizedIncome here because of real-time
-      uint256 newATokenIndex = AaveL1Pool.getReserveNormalizedIncome(position.aTokenAddress);
-
-      newATokenAmount = oldATokenAmount * (newATokenIndex.rayDiv(oldATokenIndex));
-      (position.aTokenIndex, position.aTokenAmount) = (newATokenIndex, newATokenAmount);
-    }
-
-    if (oldDebtTokenAmount != 0) {
-      uint256 newDebtTokenIndex = AaveL1Pool.getReserveNormalizedVariableDebt(position.debtTokenAddress);
-
-      newDebtTokenAmount = oldDebtTokenAmount * (newDebtTokenIndex.rayDiv(oldDebtTokenIndex));
-      (position.debtTokenIndex, position.debtTokenAmount) = (newDebtTokenIndex, newDebtTokenAmount);
-    }
-  }
-
   /**
    * @dev execute open order
    *
    */
-  function executeOpenExactInput(
+  function executeOpenExactOutput(
     IAddressesProvider FLAEX_PROVIDER,
-    Types.executeOpen memory params // Types.tradingPairInfo storage position
+    mapping(bytes => Types.tradingPairInfo) storage tradingPair,
+    Types.orderInfo storage position,
+    Types.executeOpen memory params
   ) external {
-    IVault Vault = IVault(FLAEX_PROVIDER.getVault());
     IUniswapV3Factory UniFactory = IUniswapV3Factory(FLAEX_PROVIDER.getUniFactory());
-
-    // transfer from msg.sender directly to Vault ignoring address(this)
-    IERC20(params.baseToken).safeTransferFrom(msg.sender, address(Vault), params.baseMarginAmount);
-
-    // borrowFlashAmount = baseMargin * marginLevel
-    uint256 borrowFlashAmount = params.baseMarginAmount.percentMul(params.marginLevel);
-
     IUniswapV3Pool UniPool = IUniswapV3Pool(UniFactory.getPool(params.baseToken, params.quoteToken, params.uniFee));
 
-    // initialize Flash
-    bool zeroForOne = params.baseToken > params.quoteToken;
-    uint160 sqrtPriceLimitX96 = (zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1);
+    /// @dev Validation
+    params.tradingFee = ValidationLogic.executeOpenCheck(FLAEX_PROVIDER, tradingPair, params);
 
-    bytes memory data = abi.encode(params, msg.sender, Types.DIRECTION.OPEN);
+    /// @dev accrueInterest:
+    if (position.aTokenAmount != 0 || position.debtTokenAmount != 0) {
+      AccrueLogic.executeAccrue(FLAEX_PROVIDER, position);
+    }
+
+    /// @dev transfer from msg.sender address(this)
+    IERC20(params.baseToken).safeTransferFrom(msg.sender, address(this), params.baseMarginAmount);
+
+    /// @dev amountToFlash = baseMargin * marginLevel
+    uint256 amountToFlash = params.baseMarginAmount.percentMul(params.marginLevel);
+
+    /// @dev initialize Flash
+    bool zeroForOne = params.baseToken > params.quoteToken;
+
+    bytes memory data = abi.encode(
+      params,
+      Types.executeClose({
+        baseToken: address(0),
+        quoteToken: address(0),
+        baseTokenAmount: 0,
+        minQuoteTokenAmount: 0,
+        tradingFee: 0,
+        uniFee: 0,
+        AaveInterestRateMode: 0
+      }),
+      msg.sender,
+      Types.DIRECTION.OPEN
+    );
 
     (int256 amount0Delta, int256 amount1Delta) = UniPool.swap(
       address(this),
       zeroForOne,
-      -borrowFlashAmount.toInt256(),
-      sqrtPriceLimitX96,
+      -amountToFlash.toInt256(),
+      (zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1),
       data
     );
 
-    uint256 amountOutReceived;
-    (, amountOutReceived) = zeroForOne
-      ? (uint256(amount0Delta), uint256(-amount1Delta))
-      : (uint256(amount1Delta), uint256(-amount0Delta));
+    /// @dev it's technically possible to not receive the full output amount,
+    /// @dev so if no price limit has been specified, require this possibility away
+    zeroForOne ? require(uint256(-amount1Delta) == amountToFlash) : require(uint256(-amount0Delta) == amountToFlash);
 
-    // it's technically possible to not receive the full output amount,
-    // so if no price limit has been specified, require this possibility away
-    if (sqrtPriceLimitX96 == 0) require(amountOutReceived == borrowFlashAmount);
+    emit OrderOpened(
+      msg.sender,
+      params.baseToken,
+      params.quoteToken,
+      params.baseMarginAmount,
+      params.marginLevel,
+      params.baseMarginAmount + params.baseMarginAmount.percentMul(params.marginLevel),
+      amount0Delta > 0
+        ? uint256(amount0Delta) + uint256(amount0Delta).percentMul(params.tradingFee)
+        : uint256(amount1Delta) + uint256(amount1Delta).percentMul(params.tradingFee)
+    );
+  }
+
+  function executeCloseExactInput(
+    IAddressesProvider FLAEX_PROVIDER,
+    mapping(bytes => Types.tradingPairInfo) storage tradingPair,
+    Types.orderInfo storage position,
+    Types.executeClose memory params
+  ) external {
+    IUniswapV3Factory UniFactory = IUniswapV3Factory(FLAEX_PROVIDER.getUniFactory());
+    IUniswapV3Pool UniPool = IUniswapV3Pool(UniFactory.getPool(params.baseToken, params.quoteToken, params.uniFee));
+
+    /// @dev accrueInterest, this is a MUST DO FIRST, if either aTokenAmount or debtTokenAmount == 0 then revert.
+    if (position.aTokenAmount == 0 && position.debtTokenAmount == 0) {
+      revert("User_Has_No_Position");
+    } else AccrueLogic.executeAccrue(FLAEX_PROVIDER, position);
+
+    /// @dev Validation, also needs to do sanity check on amount
+    (params.tradingFee, params.baseTokenAmount) = ValidationLogic.executeCloseCheck(
+      FLAEX_PROVIDER,
+      tradingPair,
+      position,
+      params
+    );
+
+    /// @dev amountToFlash is an estimated amount only because of ExactInput Swap. If later on when the withdrawn amount
+    /// @dev of Debt Token (which is Exact) is not enough to repay Flash, function will fail
+    /// @dev amountToFlash != params.minQuoteTokenAmount, it is the result of the UniPool.swap()
+
+    /// @dev initialize Flash
+    bool zeroForOne = params.baseToken < params.quoteToken;
+
+    bytes memory data = abi.encode(
+      Types.executeOpen({
+        baseToken: address(0),
+        quoteToken: address(0),
+        baseMarginAmount: 0,
+        maxQuoteTokenAmount: 0,
+        tradingFee: 0,
+        uniFee: 0,
+        AaveReferralCode: 0,
+        AaveInterestRateMode: 0,
+        marginLevel: 0
+      }),
+      params,
+      msg.sender,
+      Types.DIRECTION.CLOSE
+    );
+
+    uint256 previousDebtTokenAmount = position.debtTokenAmount;
+
+    (int256 amount0, int256 amount1) = UniPool.swap(
+      address(this),
+      zeroForOne,
+      params.baseTokenAmount.toInt256(),
+      (zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1),
+      abi.encode(data)
+    );
+
+    require(uint256(-(zeroForOne ? amount1 : amount0)) >= params.minQuoteTokenAmount, "Too_Much_Output_Amount");
+
+    emit OrderClosed(
+      msg.sender,
+      params.baseToken,
+      params.quoteToken,
+      params.baseTokenAmount,
+      position.debtTokenAmount == 0
+        ? previousDebtTokenAmount
+        : uint256(-(zeroForOne ? amount1 : amount0)) -
+          uint256(-(zeroForOne ? amount1 : amount0)).percentMul(params.tradingFee)
+    );
   }
 }
-
-/**
- struct orderInfo {
-    address aTokenAddress;
-    uint256 aTokenAmount;
-    uint256 aTokenIndex;
-    address debtTokenAddress;
-    uint256 debtTokenAmount;
-    uint256 debtTokenIndex;
-    uint256 rewards;
-
-  struct executeOpen {
-    address baseToken;
-    address quoteToken;
-    uint256 baseMargin;
-    uint256 maxQuoteTokenAmount;
-    uint24 uniFee;
-    uint256 marginLevel;
-    uint256 maxMarginLevel;
-  }
-  } */

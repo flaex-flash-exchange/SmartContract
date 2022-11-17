@@ -7,4 +7,6 @@ interface IVault {
     address from,
     uint256 amount
   ) external;
+
+  function withdrawFromVault(address asset, uint256 amount) external;
 }

@@ -10,28 +10,12 @@ import {ReentrancyGuard} from "../libraries/utils/ReentrancyGuard.sol";
 import {MainStorage} from "../storage/MainStorage.sol";
 import {IMain} from "../interfaces/IMain.sol";
 import {Types} from "../libraries/Types.sol";
-import {Vault} from "../vault/Vault.sol";
-import {ValidationLogic} from "../libraries/logic/ValidationLogic.sol";
 import {SwapCallback} from "../libraries/logic/SwapCallback.sol";
 
 //Aave Stuff:
-import {IL2Pool} from "@aave/core-v3/contracts/interfaces/IL2Pool.sol";
-import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
-import {IAToken} from "@aave/core-v3/contracts/interfaces/IAToken.sol";
-import {L2Encoder} from "@aave/core-v3/contracts/misc/L2Encoder.sol";
-import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
-import {DataTypes} from "@aave/core-v3/contracts/protocol/libraries/types/DataTypes.sol";
-
-import {IERC20} from "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20.sol";
-import {GPv2SafeERC20} from "@aave/core-v3/contracts/dependencies/gnosis/contracts/GPv2SafeERC20.sol";
-import {IAToken} from "@aave/core-v3/contracts/interfaces/IAToken.sol";
-import {WadRayMath} from "@aave/core-v3/contracts/protocol/libraries/math/WadRayMath.sol";
 
 //UniSwap Stuff
-import {PeripheryPayments} from "@uniswap/v3-periphery/contracts/base/PeripheryPayments.sol";
 import {IUniswapV3SwapCallback} from "@uniswap/v3-core/contracts/interfaces/callback/IUniswapV3SwapCallback.sol";
-import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
-import "@uniswap/v3-periphery/contracts/libraries/CallbackValidation.sol";
 import "@uniswap/v3-periphery/contracts/libraries/CallbackValidation.sol";
 
 //Other Stuff
@@ -41,17 +25,14 @@ import "@uniswap/v3-periphery/contracts/libraries/CallbackValidation.sol";
   * @author Flaex
   * @notice User can:
     - Open/Close Long/Short
-    - Supply extra Stable Coin
+    - Repay partial Debt
     - Liquidate others
   * @dev Admin functions callable as defined in AddressesProvider
  */
 
 contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
-  using GPv2SafeERC20 for IERC20;
-  using WadRayMath for uint256;
-
   IAddressesProvider public immutable FLAEX_PROVIDER;
-  uint256 MAX_INT = type(uint256).max;
+  uint256 internal constant MAX_INT = type(uint256).max;
 
   //only Admin can call
   modifier onlyAdmin() {
@@ -68,26 +49,20 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
    * @param provider The address of the IAddressesProvider contract
    */
   constructor(IAddressesProvider provider) {
-    FLAEX_PROVIDER = IAddressesProvider(provider);
+    FLAEX_PROVIDER = provider;
   }
 
   // Initialize basic configuration
   function initialize() external onlyAdmin {
     _AaveReferralCode = 0;
     _AaveInterestRateMode = 2; //None: 0, Stable: 1, Variable: 2
-
-    _AaveAddressProvider = IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider());
-    _AavePool = IL2Pool(_AaveAddressProvider.getPool());
-    _AaveL1Pool = IPool(_AaveAddressProvider.getPool());
-    _AaveEncoder = L2Encoder(FLAEX_PROVIDER.getAaveEncoder());
-
-    _UniFactory = IUniswapV3Factory(FLAEX_PROVIDER.getUniFactory());
   }
 
   /**
    * @dev basic Aprrove market, which is to:
     - approve Lending Pool to spend our asset & aToken
     - set used as collateral
+    - approve uniswap pool to spend our tokens
    * @inheritdoc IMain
    */
   function basicApprove(
@@ -95,7 +70,7 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
     address firstAsset,
     uint24 uniFee
   ) external virtual override onlyAdmin {
-    UpdateMarket.executeInitMarket(zeroAsset, firstAsset, _AavePool, _AaveL1Pool, _AaveEncoder, _UniFactory, uniFee);
+    UpdateMarket.executeInitMarket(FLAEX_PROVIDER, zeroAsset, firstAsset, uniFee);
   }
 
   /**
@@ -174,9 +149,10 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
    * @param baseToken base currency, ie: eth if open on eth/usdc
    * @param quoteToken quote currency, ie: usdc if open on eth/usdc
    * @param baseMarginAmount initial margin, must be in base currency
-   * @param maxQuoteTokenAmount maximum accepted output
+   * @param maxQuoteTokenAmount maximum accepted quoteToken In, needs to note that:
+   * this only applies on the "borrowed" amount, not on the baseMargin
    * @param uniFee either 500, 3000 or 10000 (0.05% - 0.3% - 0.1%), uint24
-   * @param marginLevel margin level, scaled-up by wad (1e18)
+   * @param marginLevel margin level, scaled-up by 1e2, ie. 100% = 100,00
    * @inheritdoc IMain
    */
   function openExactOutput(
@@ -187,41 +163,16 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
     uint24 uniFee,
     uint256 marginLevel
   ) external virtual override nonReentrant {
-    // elegibility check
-    uint24 tradingFee = ValidationLogic.executeOpenCheck(
+    ExecutionLogic.executeOpenExactOutput(
       FLAEX_PROVIDER,
       _tradingPair,
+      _position[msg.sender][abi.encode(baseToken, quoteToken)],
       Types.executeOpen({
         baseToken: baseToken,
         quoteToken: quoteToken,
         baseMarginAmount: baseMarginAmount,
         maxQuoteTokenAmount: maxQuoteTokenAmount,
-        tradingFee: 0, // it's okay because we haven't touched this
-        uniFee: uniFee,
-        AaveReferralCode: _AaveReferralCode,
-        AaveInterestRateMode: _AaveInterestRateMode,
-        marginLevel: marginLevel
-      })
-    );
-
-    // accrue Interest
-    bytes memory encodedParams = abi.encode(baseToken, quoteToken);
-
-    if (
-      _position[msg.sender][encodedParams].aTokenAmount != 0 ||
-      _position[msg.sender][encodedParams].debtTokenAmount != 0
-    ) {
-      ExecutionLogic.executeAccrue(FLAEX_PROVIDER, _position[msg.sender][encodedParams]);
-    }
-
-    ExecutionLogic.executeOpenExactInput(
-      FLAEX_PROVIDER,
-      Types.executeOpen({
-        baseToken: baseToken,
-        quoteToken: quoteToken,
-        baseMarginAmount: baseMarginAmount,
-        maxQuoteTokenAmount: maxQuoteTokenAmount,
-        tradingFee: tradingFee, // needs to be updated
+        tradingFee: 0, // needs to be updated
         uniFee: uniFee,
         AaveReferralCode: _AaveReferralCode,
         AaveInterestRateMode: _AaveInterestRateMode,
@@ -230,6 +181,43 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
     );
   }
 
+  /**
+   * @notice close order
+   * @dev closes order by selling collateral and repay debt. if after math, debt == 0 => withdraw 100% collateral
+   * technically, we have to flash an estimated amount of quoteToken first, so there's chance a residue on quoteToken
+   * amount will be left after repaying Flash. Then we need to handle this
+   * @dev we also rely completely on our liquidation mechanism to 'not have to' check if user is in liquidation call
+   * @param baseToken base currency, ie: eth if close on eth/usdc
+   * @param quoteToken quote currency, ie: usdc if close on eth/usdc
+   * @param baseTokenAmount amount wishes to close, type(uint256).max for 100% close
+   * @param minQuoteTokenAmount minimum quote Token amount out accepted
+   * @param uniFee either 500, 3000 or 10000 (0.05% - 0.3% - 0.1%), uint24
+   * @inheritdoc IMain
+   */
+  function closeExactInput(
+    address baseToken,
+    address quoteToken,
+    uint256 baseTokenAmount,
+    uint256 minQuoteTokenAmount,
+    uint24 uniFee
+  ) external virtual override nonReentrant {
+    ExecutionLogic.executeCloseExactInput(
+      FLAEX_PROVIDER,
+      _tradingPair,
+      _position[msg.sender][abi.encode(baseToken, quoteToken)],
+      Types.executeClose({
+        baseToken: baseToken,
+        quoteToken: quoteToken,
+        baseTokenAmount: baseTokenAmount,
+        minQuoteTokenAmount: minQuoteTokenAmount,
+        tradingFee: 0,
+        uniFee: uniFee,
+        AaveInterestRateMode: _AaveInterestRateMode
+      })
+    );
+  }
+
+  /// @dev overridden function to be externally called from Uniswap Pool only
   function uniswapV3SwapCallback(
     int256 amount0Delta,
     int256 amount1Delta,
@@ -237,22 +225,33 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
   ) external override {
     require(amount0Delta > 0 || amount1Delta > 0); // swaps entirely within 0-liquidity regions are not supported
 
-    (Types.executeOpen memory params, address trader, Types.DIRECTION direction) = abi.decode(
-      _data,
-      (Types.executeOpen, address, Types.DIRECTION)
-    );
-
-    CallbackValidation.verifyCallback(address(_UniFactory), params.baseToken, params.quoteToken, params.uniFee);
+    (
+      Types.executeOpen memory openParams,
+      Types.executeClose memory closeParams,
+      address trader,
+      Types.DIRECTION direction
+    ) = abi.decode(_data, (Types.executeOpen, Types.executeClose, address, Types.DIRECTION));
 
     if (direction == Types.DIRECTION.OPEN) {
-      _position[trader][abi.encode(params.baseToken, params.quoteToken)] = SwapCallback.OpenCallback(
-        FLAEX_PROVIDER,
-        trader,
-        amount0Delta,
-        amount1Delta,
-        params,
-        _position[trader][abi.encode(params.baseToken, params.quoteToken)]
+      /// @dev this is the call back verification to make sure msg.sender is Uniswap Pool
+      CallbackValidation.verifyCallback(
+        address(_UniFactory),
+        openParams.baseToken,
+        openParams.quoteToken,
+        openParams.uniFee
       );
+
+      SwapCallback.OpenCallback(FLAEX_PROVIDER, amount0Delta, amount1Delta, trader, openParams, _position);
+    } else if (direction == Types.DIRECTION.CLOSE) {
+      /// @dev this is the call back verification to make sure msg.sender is Uniswap Pool
+      CallbackValidation.verifyCallback(
+        address(_UniFactory),
+        closeParams.baseToken,
+        closeParams.quoteToken,
+        closeParams.uniFee
+      );
+
+      SwapCallback.CloseCallback(FLAEX_PROVIDER, amount0Delta, amount1Delta, trader, closeParams, _position);
     }
   }
 

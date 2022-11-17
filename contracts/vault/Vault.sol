@@ -13,31 +13,34 @@ import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAd
 import {IERC20} from "@aave/core-v3/contracts/dependencies/openzeppelin/contracts/IERC20.sol";
 import {GPv2SafeERC20} from "@aave/core-v3/contracts/dependencies/gnosis/contracts/GPv2SafeERC20.sol";
 
-import {VaultStorage} from "./VaultStorage.sol";
+import {VaultStorage} from "../storage/VaultStorage.sol";
 import {IVault} from "../interfaces/IVault.sol";
 
 /**
  * @title Vault Contract
  * @author flaex
- * @notice Vault holds aToken and assets
- * @dev
+ * @notice Vault holds aToken, debtToken and assets
+ * @dev Technically, we do not need to double-check the amounts between Main and Vault because we assume calculations
+ * from Main is always correct. thus, any valid request from Main is accepted. is this a security threat?
  */
 
-contract Vault is IVault {
+contract Vault is IVault, ReentrancyGuard {
   using GPv2SafeERC20 for IERC20;
 
   IAddressesProvider public immutable FLAEX_PROVIDER;
-
   uint256 internal constant MAX_INT = type(uint256).max;
 
-  constructor(address provider) {
-    FLAEX_PROVIDER = IAddressesProvider(provider);
+  /**
+   * @dev Constructor.
+   * @param provider The address of the IAddressesProvider contract
+   */
+  constructor(IAddressesProvider provider) {
+    FLAEX_PROVIDER = provider;
   }
 
   /**
    * @dev Only main can call functions marked by this modifier.
    **/
-
   modifier onlyMain() {
     _onlyMain();
     _;
@@ -46,7 +49,6 @@ contract Vault is IVault {
   /**
    * @dev Only Admin can call functions marked by this modifier.
    **/
-
   modifier onlyAdmin() {
     _onlyAdmin();
     _;
@@ -83,7 +85,18 @@ contract Vault is IVault {
     uint256 amount
   ) external override onlyMain {
     IERC20(asset).safeTransferFrom(from, address(this), amount);
+    /// do stuff here
   }
 
-  function withdrawFromVault(address asset, uint256 amount) external onlyMain {}
+  /**
+   * @dev withdraw aToken, transfer Token to caller
+   * @param asset address of th underlying asset
+   * @param amount underlying asset amount
+   * @inheritdoc IVault
+   */
+  function withdrawFromVault(address asset, uint256 amount) external override onlyMain nonReentrant {
+    IPool AaveL1Pool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
+    uint256 withdrawnAmount = AaveL1Pool.withdraw(asset, amount, msg.sender);
+    assert(withdrawnAmount == amount);
+  }
 }

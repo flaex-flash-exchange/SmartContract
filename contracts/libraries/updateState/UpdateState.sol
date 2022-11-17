@@ -7,26 +7,31 @@ import {DataTypes} from "@aave/core-v3/contracts/protocol/libraries/types/DataTy
 
 library UpdateState {
   function updateOpenState(
+    Types.orderInfo storage position,
+    DataTypes.ReserveData memory baseTokenReserve,
+    DataTypes.ReserveData memory quoteTokenReserve,
     uint256 amountToSupply,
-    uint256 amountToBorrow,
-    Types.orderInfo memory localPosition,
-    DataTypes.ReserveData memory Reserve
-  ) external pure returns (Types.orderInfo memory) {
-    uint256 oldATokenAmount = localPosition.aTokenAmount;
-    uint256 oldDebtTokenAmount = localPosition.debtTokenAmount;
+    uint256 amountToBorrow
+  ) external {
+    position.aTokenAddress = baseTokenReserve.aTokenAddress;
+    position.aTokenAmount += amountToSupply;
+    position.aTokenIndex = baseTokenReserve.liquidityIndex;
+    position.debtTokenAddress = quoteTokenReserve.variableDebtTokenAddress;
+    position.debtTokenAmount += amountToBorrow;
+    position.debtTokenIndex = quoteTokenReserve.variableBorrowIndex;
+  }
 
-    uint256 newATokenAmount = amountToSupply + oldATokenAmount;
-    uint256 newDebtTokenAmount = amountToBorrow + oldDebtTokenAmount;
-
-    localPosition = Types.orderInfo({
-      aTokenAddress: Reserve.aTokenAddress,
-      aTokenAmount: newATokenAmount,
-      aTokenIndex: Reserve.liquidityIndex,
-      debtTokenAddress: Reserve.variableDebtTokenAddress,
-      debtTokenAmount: newDebtTokenAmount,
-      debtTokenIndex: Reserve.variableBorrowIndex
-    });
-
-    return localPosition;
+  /// @dev we do not need to update addresses because we assume validation check is legit
+  function updateCloseState(
+    Types.orderInfo storage position,
+    DataTypes.ReserveData memory baseTokenReserve,
+    DataTypes.ReserveData memory quoteTokenReserve,
+    uint256 amountToWithdraw,
+    uint256 amountToRepayDebt
+  ) external {
+    position.aTokenAmount -= amountToWithdraw;
+    position.aTokenIndex = baseTokenReserve.liquidityIndex;
+    position.debtTokenAmount -= amountToRepayDebt;
+    position.debtTokenIndex = quoteTokenReserve.variableBorrowIndex;
   }
 }
