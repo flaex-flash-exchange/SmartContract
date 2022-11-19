@@ -56,7 +56,7 @@ library SwapCallback {
     );
 
     /// @dev transfer Fee to Vault by calling Vault's transferFeeToVault()
-    Vault.transferFeeToVault(params.quoteToken, address(this), fee);
+    Vault.transferFeeToVault(params.quoteToken, fee);
 
     /// @dev repay Flash
     if (!isExactInput) {
@@ -135,7 +135,7 @@ library SwapCallback {
       IERC20(params.baseToken).safeTransfer(msg.sender, amountToPay);
 
       /// @dev transferFeeToVault, fee is on the amountToFlash
-      Vault.transferFeeToVault(params.baseToken, address(this), fee);
+      Vault.transferFeeToVault(params.baseToken, fee);
 
       /// @dev transfer PnL (in both currencies)
       // baseToken
@@ -148,8 +148,8 @@ library SwapCallback {
         );
 
       /// @dev write to storage
-      DataTypes.ReserveData memory baseTokenReserve = AaveL1Pool.getReserveData(params.baseToken);
-      DataTypes.ReserveData memory quoteTokenReserve = AaveL1Pool.getReserveData(params.quoteToken);
+      // DataTypes.ReserveData memory baseTokenReserve = AaveL1Pool.getReserveData(params.baseToken);
+      // DataTypes.ReserveData memory quoteTokenReserve = AaveL1Pool.getReserveData(params.quoteToken);
 
       /**
        * aTokenAddress is aToken of baseToken
@@ -161,12 +161,10 @@ library SwapCallback {
        * debtTokenIndex is current variableBorrowIndex, which implies no stable debt supported!
        */
 
-      if (amountToRepayDebt > position[trader][abi.encode(params.baseToken, params.quoteToken)].debtTokenAmount) {
+      if (amountToRepayDebt >= position[trader][abi.encode(params.baseToken, params.quoteToken)].debtTokenAmount) {
         delete position[trader][abi.encode(params.baseToken, params.quoteToken)];
       } else {
         position[trader][abi.encode(params.baseToken, params.quoteToken)].updateCloseState(
-          baseTokenReserve,
-          quoteTokenReserve,
           amountToWithdraw,
           amountToRepayDebt
         );

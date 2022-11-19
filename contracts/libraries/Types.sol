@@ -2,9 +2,8 @@
 pragma solidity ^0.8.10;
 
 library Types {
-  /** @dev we don't need aTokenAddress/debtTokenAddress because it's the token long/short, ie:
-   * long eth: supply ETH, borrow Stable
-   * short eth: supply Stable, borrow ETH
+  /** @dev
+   * we assume that aToken is the atoken of Token Long and debtToken is the debtToken of the asset being Long against
    */
   struct orderInfo {
     address aTokenAddress;
@@ -48,6 +47,24 @@ library Types {
     uint256 minQuoteTokenAmount;
     uint24 tradingFee;
     uint24 uniFee;
+    uint256 AaveInterestRateMode;
+  }
+
+  struct executeRepayParital {
+    address baseToken;
+    address quoteToken;
+    uint256 quoteTokenAmount;
+    uint256 AaveInterestRateMode;
+  }
+
+  struct executeLiquidation {
+    address baseToken;
+    address quoteToken;
+    address liquidatedUser;
+    uint256 debtToCover;
+    uint24[] uniPoolFees;
+    uint256 maxLiquidationFactor;
+    uint256 liquidationIncentive;
     uint256 AaveInterestRateMode;
   }
 

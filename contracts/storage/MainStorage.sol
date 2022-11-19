@@ -28,6 +28,15 @@ contract MainStorage {
   // Maximum number of tradingPair there have been in the protocol. It is the upper bound of the trading pair list
   uint256 internal _tradingPairCount;
 
+  // liquidation factor
+  uint256 internal _liquidationFactor;
+
+  // liquidation incentives
+  uint256 internal _liquidationIncentive;
+
+  // possible uniswap pool fees
+  uint24[] internal _uniPoolFees;
+
   // Aave Referral Code
   uint16 public _AaveReferralCode;
 

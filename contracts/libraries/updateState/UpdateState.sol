@@ -24,14 +24,19 @@ library UpdateState {
   /// @dev we do not need to update addresses because we assume validation check is legit
   function updateCloseState(
     Types.orderInfo storage position,
-    DataTypes.ReserveData memory baseTokenReserve,
-    DataTypes.ReserveData memory quoteTokenReserve,
     uint256 amountToWithdraw,
     uint256 amountToRepayDebt
   ) external {
     position.aTokenAmount -= amountToWithdraw;
-    position.aTokenIndex = baseTokenReserve.liquidityIndex;
     position.debtTokenAmount -= amountToRepayDebt;
-    position.debtTokenIndex = quoteTokenReserve.variableBorrowIndex;
+  }
+
+  function updateLiquidation(
+    Types.orderInfo storage position,
+    uint256 amountToWithdrawIncludeIncentive,
+    uint256 debtToCover
+  ) external {
+    position.aTokenAmount -= amountToWithdrawIncludeIncentive;
+    position.debtTokenAmount -= debtToCover;
   }
 }

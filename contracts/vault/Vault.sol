@@ -79,12 +79,8 @@ contract Vault is IVault, ReentrancyGuard {
    * @dev transfer fee from Main to Vault, pull call because we need to seperate protocol fee from distributable fee
    * @inheritdoc IVault
    */
-  function transferFeeToVault(
-    address asset,
-    address from,
-    uint256 amount
-  ) external override onlyMain {
-    IERC20(asset).safeTransferFrom(from, address(this), amount);
+  function transferFeeToVault(address asset, uint256 amount) external override onlyMain {
+    IERC20(asset).safeTransferFrom(msg.sender, address(this), amount);
     /// do stuff here
   }
 

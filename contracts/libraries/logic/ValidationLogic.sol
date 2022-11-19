@@ -2,15 +2,22 @@
 pragma solidity ^0.8.10;
 
 import {Types} from "../Types.sol";
+import {IAddressesProvider} from "../../interfaces/IAddressesProvider.sol";
+import {GeneralLogic} from ".//GeneralLogic.sol";
+
 import {IPool} from "@aave/core-v3/contracts/interfaces/IPool.sol";
 import {ReserveConfiguration} from "@aave/core-v3/contracts/protocol/libraries/configuration/ReserveConfiguration.sol";
-import {IUniswapV3Factory} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Factory.sol";
 import {DataTypes} from "@aave/core-v3/contracts/protocol/libraries/types/DataTypes.sol";
-import {IAddressesProvider} from "../../interfaces/IAddressesProvider.sol";
-
 import {IPoolAddressesProvider} from "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
+import {PercentageMath} from "@aave/core-v3/contracts/protocol/libraries/math/PercentageMath.sol";
+import {WadRayMath} from "@aave/core-v3/contracts/protocol/libraries/math/WadRayMath.sol";
+import {IPriceOracleGetter} from "@aave/core-v3/contracts/interfaces/IPriceOracleGetter.sol";
+
+import {IUniswapV3Factory} from "../../dependencies/uniswap/v3-core/interfaces/IUniswapV3Factory.sol";
 
 library ValidationLogic {
+  using PercentageMath for uint256;
+  using WadRayMath for uint256;
   using ReserveConfiguration for DataTypes.ReserveConfigurationMap;
 
   uint256 constant MAX_INT = type(uint256).max;
@@ -99,5 +106,63 @@ library ValidationLogic {
     );
 
     return (tradingPair[encodedParams].tradingFee, params.baseTokenAmount);
+  }
+
+  function executeLiquidationCheck(
+    IAddressesProvider FLAEX_PROVIDER,
+    mapping(bytes => Types.tradingPairInfo) storage tradingPair,
+    Types.orderInfo storage position,
+    Types.executeLiquidation memory params
+  ) external view returns (uint256 amountToWithdrawExcludeIncentive) {
+    IPool AaveL1Pool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
+    IPriceOracleGetter AaveOracle = IPriceOracleGetter(
+      IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPriceOracle()
+    );
+    IUniswapV3Factory UniFactory = IUniswapV3Factory(FLAEX_PROVIDER.getUniFactory());
+
+    bytes memory encodedParams = params.baseToken < params.quoteToken
+      ? abi.encode(params.baseToken, params.quoteToken)
+      : abi.encode(params.quoteToken, params.baseToken);
+
+    /// @dev sanity check on debtToCover
+    require(
+      params.debtToCover <= position.debtTokenAmount.percentMul(params.maxLiquidationFactor),
+      "Invalid_Debt_To_Cover"
+    );
+
+    /// @dev check on marginRatio
+    uint256 AAVEMarginRatio = GeneralLogic.getAAVEMarginRatio(
+      AaveL1Pool,
+      AaveOracle,
+      params.baseToken,
+      params.quoteToken,
+      position.aTokenAmount,
+      position.debtTokenAmount
+    );
+
+    uint256 BWAPMarginRatio = GeneralLogic.getBWAPMarginRatio(
+      UniFactory,
+      params.uniPoolFees,
+      params.baseToken,
+      params.quoteToken,
+      position.aTokenAmount,
+      position.debtTokenAmount
+    );
+
+    /// @dev require aavePrice * 99% <= uniswapPrice < aavePrice
+    require(
+      BWAPMarginRatio < AAVEMarginRatio && BWAPMarginRatio >= AAVEMarginRatio.percentMul(9900),
+      "Not_Liquidatable_Deviation"
+    );
+
+    require(
+      (BWAPMarginRatio + AAVEMarginRatio) / 2 <= tradingPair[encodedParams].liquidationThreshold,
+      "Not_Liquidatable_Ratio"
+    );
+
+    /// @dev amountToWithdrawExcludeIncentive = (debtToCover * collateral) / (borrow * marginRatio)
+    amountToWithdrawExcludeIncentive = (params.debtToCover * position.aTokenAmount).wadDiv(
+      position.debtTokenAmount * ((BWAPMarginRatio + AAVEMarginRatio) / 2)
+    );
   }
 }

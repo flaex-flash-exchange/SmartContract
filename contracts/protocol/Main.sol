@@ -5,18 +5,19 @@ pragma abicoder v2;
 //flaex Stuff
 import {IAddressesProvider} from "../interfaces/IAddressesProvider.sol";
 import {ExecutionLogic} from "../libraries/logic/ExecutionLogic.sol";
+import {SwapCallback} from "../libraries/logic/SwapCallback.sol";
 import {UpdateMarket} from "../libraries/logic/UpdateMarket.sol";
-import {ReentrancyGuard} from "../libraries/utils/ReentrancyGuard.sol";
+import {AccrueLogic} from "../libraries/logic/AccrueLogic.sol";
 import {MainStorage} from "../storage/MainStorage.sol";
 import {IMain} from "../interfaces/IMain.sol";
 import {Types} from "../libraries/Types.sol";
-import {SwapCallback} from "../libraries/logic/SwapCallback.sol";
+import {ReentrancyGuard} from "../libraries/utils/ReentrancyGuard.sol";
 
 //Aave Stuff:
 
 //UniSwap Stuff
-import {IUniswapV3SwapCallback} from "@uniswap/v3-core/contracts/interfaces/callback/IUniswapV3SwapCallback.sol";
-import "@uniswap/v3-periphery/contracts/libraries/CallbackValidation.sol";
+import {IUniswapV3SwapCallback} from "../dependencies/uniswap/v3-core/interfaces/callback/IUniswapV3SwapCallback.sol";
+import "../dependencies/uniswap/v3-periphery/libraries/CallbackValidation.sol";
 
 //Other Stuff
 
@@ -32,7 +33,6 @@ import "@uniswap/v3-periphery/contracts/libraries/CallbackValidation.sol";
 
 contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
   IAddressesProvider public immutable FLAEX_PROVIDER;
-  uint256 internal constant MAX_INT = type(uint256).max;
 
   //only Admin can call
   modifier onlyAdmin() {
@@ -55,7 +55,10 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
   // Initialize basic configuration
   function initialize() external onlyAdmin {
     _AaveReferralCode = 0;
-    _AaveInterestRateMode = 2; //None: 0, Stable: 1, Variable: 2
+    _AaveInterestRateMode = 2; // None: 0, Stable: 1, Variable: 2
+    _liquidationFactor = 5000; // 50%
+    _liquidationIncentive = 200; // 2%
+    _uniPoolFees = [uint24(500), uint24(3000), uint24(10000)];
   }
 
   /**
@@ -75,6 +78,13 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
 
   /**
    * @dev init/update Market
+   * @param Asset0 asset0
+   * @param Asset1 asset1, order of 2 assets doesn't matter
+   * @param tradingFee trading fee scaled up by 1e2, recommend 5 (0.05%)
+   * @param tradingFee_ProtocolShare share of protocol, scaled up by 1e2, recommend 1500 - 2000 (15-20%)
+   * @param liquidationThreshold imitates margin ratio of big cexes, scaled-up by 1e18, recommend 1.1*1e18
+   * @param liquidationProtocolShare share of protocol during liquidation, scaled up by 1e2, recommend 1500 - 2000 (15-20%)
+   * @param maxMarginLevel maximum margin level, scaled up by 1e2, recommend 100000 (10X)
    * @inheritdoc IMain
    */
   function updateMarket(
@@ -215,6 +225,109 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
         AaveInterestRateMode: _AaveInterestRateMode
       })
     );
+  }
+
+  /**
+   * @notice repay partial Debt, uses when user doesn't want to cut loss. No collateral is withdrawn
+   * @dev doesn't allow users to repay 100% as that would be to closeExactInput,
+   * @param baseToken base currency, ie: eth if close on eth/usdc
+   * @param quoteToken quote currency, ie: usdc if close on eth/usdc
+   * @param quoteTokenAmount amount wishes to repay
+   * @inheritdoc IMain
+   */
+  function repayPartialDebt(
+    address baseToken,
+    address quoteToken,
+    uint256 quoteTokenAmount
+  ) external virtual override nonReentrant {
+    ExecutionLogic.executeRepayPartial(
+      FLAEX_PROVIDER,
+      _position[msg.sender][abi.encode(baseToken, quoteToken)],
+      Types.executeRepayParital({
+        baseToken: baseToken,
+        quoteToken: quoteToken,
+        quoteTokenAmount: quoteTokenAmount,
+        AaveInterestRateMode: _AaveInterestRateMode
+      })
+    );
+  }
+
+  /**
+   * @notice liquidation call
+   * @dev Our Protocol as a whole is subject to AAVE's price oracle, however, our users should also rely on
+   * uniswap prices as a source of liquidation because they are trading on Uniswap.
+   * the solution to this is a 2-round-validation:
+   * uniswap must be worse than AAVE Price but no worse than 1%.
+   * @dev liquidation must occur on FLAEX before on AAVE!!!
+   * @param baseToken base currency, ie: eth if liquidate on eth/usdc
+   * @param quoteToken quote currency, ie: usdc if liquidate on eth/usdc
+   * @param liquidatedUser address of to be liquidated user
+   * @param debtToCover liquidator can choose to liquidate any % of the liquidated's debt up to _liquidationFactor
+   * @inheritdoc IMain
+   */
+  function liquidation(
+    address baseToken,
+    address quoteToken,
+    address liquidatedUser,
+    uint256 debtToCover
+  ) external virtual override nonReentrant {
+    ExecutionLogic.executeLiquidation(
+      FLAEX_PROVIDER,
+      liquidatedUser,
+      _tradingPair,
+      _position[liquidatedUser][abi.encode(baseToken, quoteToken)],
+      Types.executeLiquidation({
+        baseToken: baseToken,
+        quoteToken: quoteToken,
+        liquidatedUser: liquidatedUser,
+        debtToCover: debtToCover,
+        uniPoolFees: _uniPoolFees,
+        maxLiquidationFactor: _liquidationFactor,
+        liquidationIncentive: _liquidationIncentive,
+        AaveInterestRateMode: _AaveInterestRateMode
+      })
+    );
+  }
+
+  /**
+   * @notice view method to get basic user data
+   * @dev margin ratio is aggregated from both aave and uniswap. it's safe because it has no effect
+   * @param baseToken base currency, ie: eth if liquidate on eth/usdc
+   * @param quoteToken quote currency, ie: usdc if liquidate on eth/usdc
+   * @param user adddress of user, use msg.sender when calling for self
+   * @return baseTokenAmount new base token amount
+   * @return quoteTokenAmount new quote token amount
+   * @return liquidationThreshold liquidation threshold
+   * @return marginRatio margin ratio, scaled-up by wad (1e18)
+   * @inheritdoc IMain
+   */
+  function getUserData(
+    address baseToken,
+    address quoteToken,
+    address user
+  )
+    public
+    view
+    virtual
+    override
+    returns (
+      uint256 baseTokenAmount,
+      uint256 quoteTokenAmount,
+      uint256 liquidationThreshold,
+      uint256 marginRatio
+    )
+  {
+    return
+      AccrueLogic.executeGetUserData(
+        FLAEX_PROVIDER,
+        _uniPoolFees,
+        baseToken,
+        quoteToken,
+        _position[user][abi.encode(baseToken, quoteToken)],
+        baseToken < quoteToken
+          ? _tradingPair[abi.encode(baseToken, quoteToken)]
+          : _tradingPair[abi.encode(quoteToken, baseToken)]
+      );
   }
 
   /// @dev overridden function to be externally called from Uniswap Pool only

@@ -40,4 +40,31 @@ interface IMain {
     uint256 minQuoteTokenAmount,
     uint24 uniFee
   ) external;
+
+  function repayPartialDebt(
+    address baseToken,
+    address quoteToken,
+    uint256 quoteTokenAmount
+  ) external;
+
+  function liquidation(
+    address baseToken,
+    address quoteToken,
+    address liquidatedUser,
+    uint256 debtToCover
+  ) external;
+
+  function getUserData(
+    address baseToken,
+    address quoteToken,
+    address user
+  )
+    external
+    view
+    returns (
+      uint256 baseTokenAmount,
+      uint256 quoteTokenAmount,
+      uint256 liquidationThreshold,
+      uint256 marginRatio
+    );
 }
