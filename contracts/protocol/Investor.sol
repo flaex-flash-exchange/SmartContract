@@ -63,18 +63,6 @@ contract Investor is InvestorStorage, IInvestor, ReentrancyGuard {
     return (_acceptedAsset, _acceptedAssetSymbol);
   }
 
-  /// @dev calculate supply cap eligibility
-  function _supplyCap() internal view {
-    IPool AaveL1Pool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
-
-    (uint256 totalCollateralBase, , , , , uint256 healthFactor) = AaveL1Pool.getUserAccountData(
-      FLAEX_PROVIDER.getVault()
-    );
-
-    /// @dev initial supply < 10 mil USD or healthFactor <= 2
-    require(totalCollateralBase <= 10000000 * 1e8 || healthFactor <= WadRayMath.WAD * 2, "Too_Much_Supply_Already");
-  }
-
   /// @inheritdoc IInvestor
   function provide(uint256 amount) external virtual override {
     /// should implement a supply cap in order to secure investor's profit
@@ -142,6 +130,18 @@ contract Investor is InvestorStorage, IInvestor, ReentrancyGuard {
   }
 
   ////////////////////////////////////////////////// INTERNAL FUNCTIONS //////////////////////////////////////////////////
+
+  /// @dev calculate supply cap eligibility
+  function _supplyCap() internal view {
+    IPool AaveL1Pool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
+
+    (uint256 totalCollateralBase, , , , , uint256 healthFactor) = AaveL1Pool.getUserAccountData(
+      FLAEX_PROVIDER.getVault()
+    );
+
+    /// @dev initial supply < 10 mil USD or healthFactor <= 2
+    require(totalCollateralBase <= 10000000 * 1e8 || healthFactor <= WadRayMath.WAD * 2, "Too_Much_Supply_Already");
+  }
 
   function _claimYieldInternal(address claimer) internal {
     address[] memory activeAssets = IVault(FLAEX_PROVIDER.getVault()).getActiveAssets();
