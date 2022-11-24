@@ -7,16 +7,18 @@ import {IAddressesProvider} from "../interfaces/IAddressesProvider.sol";
 
 contract AddressesProvider is Ownable, IAddressesProvider {
   //Flaex Stuff:
-  address SuperAdmin;
-  address Main;
-  address Vault;
+  address public SuperAdmin;
+  address public Main;
+  address public Vault;
+  address public Investor;
+  address public flToken;
 
   //AAVE Stuff:
-  address AaveAddressProvider;
-  address AaveEncoder;
+  address public AaveAddressProvider;
+  address public AaveEncoder;
 
   //Uniswap Stuff
-  address UniFactory;
+  address public UniFactory;
 
   constructor(address Owner, address Admin) {
     transferOwnership(Owner);
@@ -81,5 +83,25 @@ contract AddressesProvider is Ownable, IAddressesProvider {
     address oldVault = Vault;
     Vault = newVault;
     emit VaultSet(oldVault, newVault);
+  }
+
+  function getInvestor() external view override returns (address) {
+    return Investor;
+  }
+
+  function setInvestor(address newInvestor) external override onlyOwner {
+    address oldInvestor = Investor;
+    Investor = newInvestor;
+    emit VaultSet(oldInvestor, newInvestor);
+  }
+
+  function getFlToken() external view override returns (address) {
+    return flToken;
+  }
+
+  function setFlToken(address newFlToken) external override onlyOwner {
+    address oldFlToken = flToken;
+    flToken = newFlToken;
+    emit flTokenSet(oldFlToken, newFlToken);
   }
 }

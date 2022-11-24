@@ -263,7 +263,7 @@ library ExecutionLogic {
         ? tradingPair[abi.encode(params.baseToken, params.quoteToken)].liquidationProtocolShare
         : tradingPair[abi.encode(params.quoteToken, params.baseToken)].liquidationProtocolShare
     );
-    IVault(FLAEX_PROVIDER.getVault()).transferFeeToVault(params.baseToken, liquidationProtocolShare);
+    IVault(FLAEX_PROVIDER.getVault()).transferFeeToVault(params.baseToken, liquidationProtocolShare, false);
 
     /// @dev transfer liquidation incentives to liquidator
     IERC20(params.baseToken).safeTransfer(msg.sender, liquidationIncentive - liquidationProtocolShare);

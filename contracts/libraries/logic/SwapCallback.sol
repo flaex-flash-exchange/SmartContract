@@ -56,7 +56,7 @@ library SwapCallback {
     );
 
     /// @dev transfer Fee to Vault by calling Vault's transferFeeToVault()
-    Vault.transferFeeToVault(params.quoteToken, fee);
+    Vault.transferFeeToVault(params.quoteToken, fee, true);
 
     /// @dev repay Flash
     if (!isExactInput) {
@@ -135,7 +135,7 @@ library SwapCallback {
       IERC20(params.baseToken).safeTransfer(msg.sender, amountToPay);
 
       /// @dev transferFeeToVault, fee is on the amountToFlash
-      Vault.transferFeeToVault(params.baseToken, fee);
+      Vault.transferFeeToVault(params.baseToken, fee, true);
 
       /// @dev transfer PnL (in both currencies)
       // baseToken

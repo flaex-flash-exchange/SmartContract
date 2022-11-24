@@ -8,6 +8,7 @@ interface IAddressesProvider {
   event SuperAdminSet(address oldSuperAdmin, address newSuperAdmin);
   event MainSet(address oldMain, address newMain);
   event VaultSet(address oldVault, address newVault);
+  event flTokenSet(address oldFlToken, address newFlToken);
 
   function getAaveAddressProvider() external view returns (address);
 
@@ -32,4 +33,12 @@ interface IAddressesProvider {
   function getVault() external view returns (address);
 
   function setVault(address newVault) external;
+
+  function getInvestor() external view returns (address);
+
+  function setInvestor(address newInvestor) external;
+
+  function getFlToken() external view returns (address);
+
+  function setFlToken(address newFlToken) external;
 }

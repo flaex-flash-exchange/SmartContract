@@ -26,7 +26,7 @@ library UpdateMarket {
   uint256 constant MAX_INT = type(uint256).max;
 
   // prettier-ignore
-  event MarketUpdated(uint id, address zeroAsset, address firstAsset, uint256 tradingFee, uint256 tradingFee_ProtocolShare, uint256 liquidationThreshold, uint256 liquidationProtocolShare, bool isLive);
+  event MarketUpdated(uint id, address zeroAsset, address firstAsset, uint256 tradingFee, uint256 liquidationThreshold, uint256 liquidationProtocolShare, bool isLive);
   event MarketDropped(uint256 id, address zeroAsset, address firstAsset, bool isLive);
 
   function executeInitMarket(
@@ -92,7 +92,7 @@ library UpdateMarket {
     }
 
     // prettier-ignore
-    emit MarketUpdated(params.id, params.zeroToken, params.firstToken, params.tradingFee, params.tradingFee_ProtocolShare, params.liquidationThreshold, params.liquidationProtocolShare, true);
+    emit MarketUpdated(params.id, params.zeroToken, params.firstToken, params.tradingFee, params.liquidationThreshold, params.liquidationProtocolShare, true);
 
     return PairExisted;
   }
@@ -107,5 +107,18 @@ library UpdateMarket {
     tradingPair[encodedParams].isLive = false;
 
     emit MarketDropped(tradingPair[encodedParams].id, zeroAsset, firstAsset, false);
+  }
+
+  /// @dev safe because only Main can pull call transferFrom from Vault
+  function executeApproveVault(
+    IAddressesProvider FLAEX_PROVIDER,
+    address[] memory Assets,
+    bool isUpapprove
+  ) external {
+    for (uint8 i = 0; i < Assets.length; i++) {
+      !isUpapprove
+        ? IERC20(Assets[i]).approve(FLAEX_PROVIDER.getVault(), MAX_INT)
+        : IERC20(Assets[i]).approve(FLAEX_PROVIDER.getVault(), 0);
+    }
   }
 }

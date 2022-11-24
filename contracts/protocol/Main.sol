@@ -34,7 +34,7 @@ import "../dependencies/uniswap/v3-periphery/libraries/CallbackValidation.sol";
 contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
   IAddressesProvider public immutable FLAEX_PROVIDER;
 
-  //only Admin can call
+  /// @dev only Admin can call
   modifier onlyAdmin() {
     _onlyAdmin();
     _;
@@ -50,100 +50,6 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
    */
   constructor(IAddressesProvider provider) {
     FLAEX_PROVIDER = provider;
-  }
-
-  // Initialize basic configuration
-  function initialize() external onlyAdmin {
-    _AaveReferralCode = 0;
-    _AaveInterestRateMode = 2; // None: 0, Stable: 1, Variable: 2
-    _liquidationFactor = 5000; // 50%
-    _liquidationIncentive = 200; // 2%
-    _uniPoolFees = [uint24(500), uint24(3000), uint24(10000)];
-  }
-
-  /**
-   * @dev basic Aprrove market, which is to:
-    - approve Lending Pool to spend our asset & aToken
-    - set used as collateral
-    - approve uniswap pool to spend our tokens
-   * @inheritdoc IMain
-   */
-  function basicApprove(
-    address zeroAsset,
-    address firstAsset,
-    uint24 uniFee
-  ) external virtual override onlyAdmin {
-    UpdateMarket.executeInitMarket(FLAEX_PROVIDER, zeroAsset, firstAsset, uniFee);
-  }
-
-  /**
-   * @dev init/update Market
-   * @param Asset0 asset0
-   * @param Asset1 asset1, order of 2 assets doesn't matter
-   * @param tradingFee trading fee scaled up by 1e2, recommend 5 (0.05%)
-   * @param tradingFee_ProtocolShare share of protocol, scaled up by 1e2, recommend 1500 - 2000 (15-20%)
-   * @param liquidationThreshold imitates margin ratio of big cexes, scaled-up by 1e18, recommend 1.1*1e18
-   * @param liquidationProtocolShare share of protocol during liquidation, scaled up by 1e2, recommend 1500 - 2000 (15-20%)
-   * @param maxMarginLevel maximum margin level, scaled up by 1e2, recommend 100000 (10X)
-   * @inheritdoc IMain
-   */
-  function updateMarket(
-    address Asset0,
-    address Asset1,
-    uint24 tradingFee,
-    uint256 tradingFee_ProtocolShare,
-    uint256 liquidationThreshold,
-    uint256 liquidationProtocolShare,
-    uint256 maxMarginLevel
-  ) external virtual override onlyAdmin {
-    //in-line with uniswap
-    (address zeroAsset, address firstAsset) = Asset0 < Asset1 ? (Asset0, Asset1) : (Asset1, Asset0);
-
-    if (
-      !(
-        UpdateMarket.executeUpdateMarket(
-          _tradingPair,
-          _tradingPairList,
-          Types.tradingPairInfo({
-            id: _tradingPairCount,
-            zeroToken: zeroAsset,
-            firstToken: firstAsset,
-            tradingFee: tradingFee,
-            tradingFee_ProtocolShare: tradingFee_ProtocolShare,
-            liquidationThreshold: liquidationThreshold,
-            liquidationProtocolShare: liquidationProtocolShare,
-            maxMarginLevel: maxMarginLevel,
-            isLive: true
-          })
-        )
-      )
-    ) {
-      _tradingPairCount++;
-    }
-  }
-
-  /**
-   * @dev drop market, isLive -> False
-   * @inheritdoc IMain
-   */
-  function dropMarket(address Asset0, address Asset1) external virtual override onlyAdmin {
-    //in-line with uniswap
-    (address zeroAsset, address firstAsset) = Asset0 < Asset1 ? (Asset0, Asset1) : (Asset1, Asset0);
-
-    UpdateMarket.executeDropMarket(zeroAsset, firstAsset, _tradingPair);
-  }
-
-  /// @inheritdoc IMain
-  function getAllMarkets() public view virtual override returns (address[] memory) {
-    address[] memory allMarkets;
-
-    for (uint256 i = 0; i < (_tradingPairCount - 1) * 2; i += 2) {
-      (address zeroToken, address firstToken) = abi.decode(_tradingPairList[i / 2], (address, address));
-      allMarkets[i] = zeroToken;
-      allMarkets[i + 1] = firstToken;
-    }
-
-    return allMarkets;
   }
 
   /**
@@ -289,47 +195,6 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
     );
   }
 
-  /**
-   * @notice view method to get basic user data
-   * @dev margin ratio is aggregated from both aave and uniswap. it's safe because it has no effect
-   * @param baseToken base currency, ie: eth if liquidate on eth/usdc
-   * @param quoteToken quote currency, ie: usdc if liquidate on eth/usdc
-   * @param user adddress of user, use msg.sender when calling for self
-   * @return baseTokenAmount new base token amount
-   * @return quoteTokenAmount new quote token amount
-   * @return liquidationThreshold liquidation threshold
-   * @return marginRatio margin ratio, scaled-up by wad (1e18)
-   * @inheritdoc IMain
-   */
-  function getUserData(
-    address baseToken,
-    address quoteToken,
-    address user
-  )
-    public
-    view
-    virtual
-    override
-    returns (
-      uint256 baseTokenAmount,
-      uint256 quoteTokenAmount,
-      uint256 liquidationThreshold,
-      uint256 marginRatio
-    )
-  {
-    return
-      AccrueLogic.executeGetUserData(
-        FLAEX_PROVIDER,
-        _uniPoolFees,
-        baseToken,
-        quoteToken,
-        _position[user][abi.encode(baseToken, quoteToken)],
-        baseToken < quoteToken
-          ? _tradingPair[abi.encode(baseToken, quoteToken)]
-          : _tradingPair[abi.encode(quoteToken, baseToken)]
-      );
-  }
-
   /// @dev overridden function to be externally called from Uniswap Pool only
   function uniswapV3SwapCallback(
     int256 amount0Delta,
@@ -366,6 +231,196 @@ contract Main is MainStorage, IMain, IUniswapV3SwapCallback, ReentrancyGuard {
 
       SwapCallback.CloseCallback(FLAEX_PROVIDER, amount0Delta, amount1Delta, trader, closeParams, _position);
     }
+  }
+
+  ////////////////////////////////////////////////// ADMIN FUNCTIONS //////////////////////////////////////////////////
+
+  // Initialize basic configuration
+  function initialize() external onlyAdmin {
+    _AaveReferralCode = 0;
+    _AaveInterestRateMode = 2; // None: 0, Stable: 1, Variable: 2
+    _liquidationFactor = 5000; // 50%
+    _liquidationIncentive = 200; // 2%
+    _uniPoolFees = [uint24(500), uint24(3000), uint24(10000)];
+  }
+
+  // approve Vault to spend our tokens
+  function approveVault(address[] memory Assets, bool isUnapprove) external onlyAdmin {
+    UpdateMarket.executeApproveVault(FLAEX_PROVIDER, Assets, isUnapprove);
+  }
+
+  /**
+   * @dev basic Aprrove market, which is to:
+    - approve Lending Pool to spend our asset & aToken
+    - set used as collateral
+    - approve uniswap pool to spend our tokens
+   * @inheritdoc IMain
+   */
+  function basicApprove(
+    address zeroAsset,
+    address firstAsset,
+    uint24 uniFee
+  ) external virtual override onlyAdmin {
+    UpdateMarket.executeInitMarket(FLAEX_PROVIDER, zeroAsset, firstAsset, uniFee);
+  }
+
+  /**
+   * @dev init/update Market
+   * @param Asset0 asset0
+   * @param Asset1 asset1, order of 2 assets doesn't matter
+   * @param tradingFee trading fee scaled up by 1e2, recommend 5 (0.05%)
+   * @param liquidationThreshold imitates margin ratio of big cexes, scaled-up by 1e18, recommend 1.1*1e18
+   * @param liquidationProtocolShare share of protocol during liquidation, scaled up by 1e2, recommend 1500 - 2000 (15-20%)
+   * @param maxMarginLevel maximum margin level, scaled up by 1e2, recommend 100000 (10X)
+   * @inheritdoc IMain
+   */
+  function updateMarket(
+    address Asset0,
+    address Asset1,
+    uint24 tradingFee,
+    uint256 liquidationThreshold,
+    uint256 liquidationProtocolShare,
+    uint256 maxMarginLevel
+  ) external virtual override onlyAdmin {
+    //in-line with uniswap
+    (address zeroAsset, address firstAsset) = Asset0 < Asset1 ? (Asset0, Asset1) : (Asset1, Asset0);
+
+    if (
+      !(
+        UpdateMarket.executeUpdateMarket(
+          _tradingPair,
+          _tradingPairList,
+          Types.tradingPairInfo({
+            id: _tradingPairCount,
+            zeroToken: zeroAsset,
+            firstToken: firstAsset,
+            tradingFee: tradingFee,
+            liquidationThreshold: liquidationThreshold,
+            liquidationProtocolShare: liquidationProtocolShare,
+            maxMarginLevel: maxMarginLevel,
+            isLive: true
+          })
+        )
+      )
+    ) {
+      _tradingPairCount++;
+    }
+  }
+
+  /// @dev drop market, isLive -> False
+  /// @inheritdoc IMain
+  function dropMarket(address Asset0, address Asset1) external virtual override onlyAdmin {
+    //in-line with uniswap
+    (address zeroAsset, address firstAsset) = Asset0 < Asset1 ? (Asset0, Asset1) : (Asset1, Asset0);
+
+    UpdateMarket.executeDropMarket(zeroAsset, firstAsset, _tradingPair);
+  }
+
+  /// @inheritdoc IMain
+  function setLiquidationParameters(uint256 newLiquidationFactor, uint256 newLiquidationIncentive)
+    external
+    override
+    onlyAdmin
+  {
+    uint256 oldLiquidationFactor = _liquidationFactor;
+    uint256 oldLiquidationIncentive = _liquidationIncentive;
+
+    _liquidationFactor = newLiquidationFactor;
+    _liquidationIncentive = newLiquidationIncentive;
+
+    emit liquidationParamatersSet(
+      oldLiquidationFactor,
+      _liquidationFactor,
+      oldLiquidationIncentive,
+      _liquidationIncentive
+    );
+  }
+
+  /// @inheritdoc IMain
+  function setAaveReferralCode(uint16 newCode) external override onlyAdmin {
+    uint16 oldCode = _AaveReferralCode;
+    _AaveReferralCode = newCode;
+
+    emit AaveReferralCodeSet(oldCode, _AaveReferralCode);
+  }
+
+  ////////////////////////////////////////////////// SHARE VIEW FUNCTIONS //////////////////////////////////////////////////
+
+  /// @inheritdoc IMain
+  function getAllMarkets() public view virtual override returns (address[] memory) {
+    address[] memory allMarkets;
+
+    for (uint256 i = 0; i < (_tradingPairCount - 1) * 2; i += 2) {
+      (address zeroToken, address firstToken) = abi.decode(_tradingPairList[i / 2], (address, address));
+      allMarkets[i] = zeroToken;
+      allMarkets[i + 1] = firstToken;
+    }
+
+    return allMarkets;
+  }
+
+  /// @inheritdoc IMain
+  function getMarketConfiguration(address baseToken, address quoteToken)
+    public
+    view
+    override
+    returns (Types.tradingPairInfo memory)
+  {
+    bytes memory encodedParams = baseToken < quoteToken
+      ? abi.encode(baseToken, quoteToken)
+      : abi.encode(quoteToken, baseToken);
+
+    return _tradingPair[encodedParams];
+  }
+
+  /**
+   * @notice view method to get basic user data
+   * @dev margin ratio is aggregated from both aave and uniswap. it's safe because it has no effect
+   * @param baseToken base currency, ie: eth if liquidate on eth/usdc
+   * @param quoteToken quote currency, ie: usdc if liquidate on eth/usdc
+   * @param user adddress of user, use msg.sender when calling for self
+   * @return tuple
+   * @inheritdoc IMain
+   */
+  function getUserData(
+    address baseToken,
+    address quoteToken,
+    address user
+  ) public view virtual override returns (Types.userDatas memory) {
+    Types.userDatas memory locals;
+
+    (locals.baseToken, locals.quoteToken) = (baseToken, quoteToken);
+    (locals.baseTokenAmount, locals.quoteTokenAmount, locals.liquidationThreshold, locals.marginRatio) = AccrueLogic
+      .executeGetUserData(
+        FLAEX_PROVIDER,
+        _uniPoolFees,
+        baseToken,
+        quoteToken,
+        _position[user][abi.encode(baseToken, quoteToken)],
+        baseToken < quoteToken
+          ? _tradingPair[abi.encode(baseToken, quoteToken)]
+          : _tradingPair[abi.encode(quoteToken, baseToken)]
+      );
+
+    return locals;
+  }
+
+  /**
+   * @notice view method to get user's all data
+   * @param user adddress of user, use msg.sender when calling for self
+   * @return tuple
+   * @inheritdoc IMain
+   */
+  function getUserDataS(address user) public view virtual override returns (Types.userDatas[] memory) {
+    Types.userDatas[] memory res = new Types.userDatas[]((_tradingPairCount - 1) * 2);
+
+    for (uint8 i = 0; i < (_tradingPairCount - 1) * 2; i += 2) {
+      (address asset0, address asset1) = abi.decode(_tradingPairList[i / 2], (address, address));
+      res[i] = getUserData(asset0, asset1, user);
+      res[i + 1] = getUserData(asset1, asset0, user);
+    }
+
+    return res;
   }
 
   receive() external payable {}

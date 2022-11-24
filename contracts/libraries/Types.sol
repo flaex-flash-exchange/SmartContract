@@ -21,7 +21,6 @@ library Types {
     address zeroToken;
     address firstToken;
     uint24 tradingFee;
-    uint256 tradingFee_ProtocolShare;
     uint256 liquidationThreshold;
     uint256 liquidationProtocolShare;
     uint256 maxMarginLevel;
@@ -66,6 +65,15 @@ library Types {
     uint256 maxLiquidationFactor;
     uint256 liquidationIncentive;
     uint256 AaveInterestRateMode;
+  }
+
+  struct userDatas {
+    address baseToken;
+    address quoteToken;
+    uint256 baseTokenAmount;
+    uint256 quoteTokenAmount;
+    uint256 liquidationThreshold;
+    uint256 marginRatio;
   }
 
   enum DIRECTION {
