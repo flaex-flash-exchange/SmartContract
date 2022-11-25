@@ -31,6 +31,7 @@ contract Investor is InvestorStorage, IInvestor, ReentrancyGuard {
 
   IAddressesProvider public immutable FLAEX_PROVIDER;
   uint256 internal constant MAX_INT = type(uint256).max;
+  uint256 internal constant SECONDS_PER_DAY = 86400;
 
   /// @dev only Admin can call
   modifier onlyAdmin() {
@@ -68,32 +69,35 @@ contract Investor is InvestorStorage, IInvestor, ReentrancyGuard {
     /// should implement a supply cap in order to secure investor's profit
     _supplyCap();
 
-    IERC20(_acceptedAsset).safeTransferFrom(msg.sender, address(this), amount);
+    // check if balance is > 0, if > 0: claim rewards
+    if (IFlToken(FLAEX_PROVIDER.getFlToken()).balanceOf(msg.sender) > 0) {
+      // claim rewards first
+      _claimYieldInternal(msg.sender);
+    }
 
-    IPool AaveL1Pool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
-    // call supply on behalf of Vault
-    AaveL1Pool.supply(_acceptedAsset, amount, FLAEX_PROVIDER.getVault(), _AaveReferralCode);
+    _supplyInternal(msg.sender, amount);
+
+    // emit amount instead of amountToMint
+    emit AssetProvided(msg.sender, _acceptedAsset, amount);
+  }
+
+  /// @inheritdoc IInvestor
+  function provideLock(uint256 amount, uint256 daysToLock) external virtual override {
+    _supplyCap();
 
     // check if balance is > 0, if > 0: claim rewards
     if (IFlToken(FLAEX_PROVIDER.getFlToken()).balanceOf(msg.sender) > 0) {
       // claim rewards first
       _claimYieldInternal(msg.sender);
-    } else {
-      _Investor[msg.sender].supplyIndex = AaveL1Pool.getReserveNormalizedIncome(_acceptedAsset);
-      address[] memory activeAssets = IVault(FLAEX_PROVIDER.getVault()).getActiveAssets();
-
-      for (uint8 i = 0; i < activeAssets.length; i++) {
-        (uint256 currentFlIndex, , ) = IVault(FLAEX_PROVIDER.getVault()).getYieldInfo(activeAssets[i]);
-        _Investor[msg.sender].Yield[activeAssets[i]] = currentFlIndex;
-      }
     }
 
-    // mint flToken/supplyIndex to msg.sender
-    uint256 amountToMint = amount.rayDiv(_Investor[msg.sender].supplyIndex);
-    IFlToken(FLAEX_PROVIDER.getFlToken()).mint(msg.sender, amountToMint);
+    _supplyInternal(msg.sender, amount);
 
-    // emit amount instead of amountToMint
-    emit AssetProvided(msg.sender, _acceptedAsset, amount);
+    uint256 daysToSeconds = daysToLock * SECONDS_PER_DAY;
+
+    _Investor[msg.sender].lockTimestamp = block.timestamp + daysToSeconds;
+
+    emit AssetProvidedLock(msg.sender, _acceptedAsset, amount, daysToLock);
   }
 
   /// @inheritdoc IInvestor
@@ -112,6 +116,7 @@ contract Investor is InvestorStorage, IInvestor, ReentrancyGuard {
   /// @inheritdoc IInvestor
   function withdraw(uint256 amount) external virtual override nonReentrant returns (uint256) {
     require(amount <= IFlToken(FLAEX_PROVIDER.getFlToken()).balanceOf(msg.sender), "Invalid_Withdraw_Amount");
+    require(_Investor[msg.sender].lockTimestamp <= block.timestamp, "Not_Yet_Withdrawable");
 
     // claim rewards
     _claimYieldInternal(msg.sender);
@@ -176,6 +181,26 @@ contract Investor is InvestorStorage, IInvestor, ReentrancyGuard {
     emit yieldClaimed(claimer, claimedAssets, yieldToClaim);
   }
 
+  function _supplyInternal(address supplier, uint256 amount) internal {
+    IERC20(_acceptedAsset).safeTransferFrom(supplier, address(this), amount);
+
+    IPool AaveL1Pool = IPool(IPoolAddressesProvider(FLAEX_PROVIDER.getAaveAddressProvider()).getPool());
+    // call supply on behalf of Vault
+    AaveL1Pool.supply(_acceptedAsset, amount, FLAEX_PROVIDER.getVault(), _AaveReferralCode);
+
+    _Investor[supplier].supplyIndex = AaveL1Pool.getReserveNormalizedIncome(_acceptedAsset);
+    address[] memory activeAssets = IVault(FLAEX_PROVIDER.getVault()).getActiveAssets();
+
+    for (uint8 i = 0; i < activeAssets.length; i++) {
+      (uint256 currentFlIndex, , ) = IVault(FLAEX_PROVIDER.getVault()).getYieldInfo(activeAssets[i]);
+      _Investor[supplier].Yield[activeAssets[i]] = currentFlIndex;
+    }
+
+    // mint flToken/supplyIndex to msg.sender
+    uint256 amountToMint = amount.rayDiv(_Investor[msg.sender].supplyIndex);
+    IFlToken(FLAEX_PROVIDER.getFlToken()).mint(msg.sender, amountToMint);
+  }
+
   ////////////////////////////////////////////////// SHARE VIEW FUNCTIONS //////////////////////////////////////////////////
 
   /// @inheritdoc IInvestor
@@ -185,6 +210,11 @@ contract Investor is InvestorStorage, IInvestor, ReentrancyGuard {
       .getReserveNormalizedIncome(_acceptedAsset);
 
     return flTokenBalance.rayMul(currentSupplyIndex);
+  }
+
+  /// @inheritdoc IInvestor
+  function getInvestorRemainingLock(address user) public view virtual override returns (uint256) {
+    return _Investor[user].lockTimestamp;
   }
 
   /// @inheritdoc IInvestor

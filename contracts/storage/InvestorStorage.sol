@@ -16,6 +16,7 @@ contract InvestorStorage {
 
   struct investorInfo {
     uint256 supplyIndex;
+    uint256 lockTimestamp;
     mapping(address => uint256) Yield;
   }
 
