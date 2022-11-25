@@ -92,7 +92,8 @@ contract Investor is InvestorStorage, IInvestor, ReentrancyGuard {
     uint256 amountToMint = amount.rayDiv(_Investor[msg.sender].supplyIndex);
     IFlToken(FLAEX_PROVIDER.getFlToken()).mint(msg.sender, amountToMint);
 
-    emit AssetProvided(msg.sender, _acceptedAsset, amountToMint);
+    // emit amount instead of amountToMint
+    emit AssetProvided(msg.sender, _acceptedAsset, amount);
   }
 
   /// @inheritdoc IInvestor
@@ -116,17 +117,18 @@ contract Investor is InvestorStorage, IInvestor, ReentrancyGuard {
     _claimYieldInternal(msg.sender);
 
     uint256 currentSupplyIndex = _Investor[msg.sender].supplyIndex;
-    uint256 amountToBurn = IFlToken(FLAEX_PROVIDER.getFlToken()).balanceOf(msg.sender).rayMul(currentSupplyIndex);
+    uint256 amountToWithdraw = IFlToken(FLAEX_PROVIDER.getFlToken()).balanceOf(msg.sender).rayMul(currentSupplyIndex);
 
-    // burn
-    IFlToken(FLAEX_PROVIDER.getFlToken()).burn(msg.sender, amountToBurn);
+    // burn amount
+    IFlToken(FLAEX_PROVIDER.getFlToken()).burn(msg.sender, amount);
 
     // call withdraw on Vault
-    IVault(FLAEX_PROVIDER.getVault()).withdrawToInvestor(msg.sender, _acceptedAsset, amountToBurn);
+    IVault(FLAEX_PROVIDER.getVault()).withdrawToInvestor(msg.sender, _acceptedAsset, amountToWithdraw);
 
-    emit assetWithdrawn(msg.sender, _acceptedAsset, amountToBurn);
+    // emit amountToWithdraw
+    emit assetWithdrawn(msg.sender, _acceptedAsset, amountToWithdraw);
 
-    return amountToBurn;
+    return amountToWithdraw;
   }
 
   ////////////////////////////////////////////////// INTERNAL FUNCTIONS //////////////////////////////////////////////////
